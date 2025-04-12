@@ -1,6 +1,6 @@
 package ru.choomandco.diplsm.storage.sstable;
 
-import ru.choomandco.diplsm.storage.interfaces.SSTable;
+import ru.choomandco.diplsm.storage.interfaces.SortedStringTable;
 
 import java.io.*;
 import java.util.ArrayList;
@@ -11,7 +11,7 @@ import java.util.TreeMap;
 /**
  * Класс SSTable
  */
-public class SortedStringTable implements SSTable {
+public class SSTable implements SortedStringTable {
 
     /**
      * Метод пишет мапу MemTable в новый SSTable.

@@ -1,7 +1,6 @@
 package ru.choomandco.diplsm.storage.memtable;
 
-import ru.choomandco.diplsm.storage.interfaces.MTEventListener;
-import ru.choomandco.diplsm.storage.interfaces.MemTable;
+import ru.choomandco.diplsm.storage.interfaces.MemoryTable;
 
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -10,7 +9,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
 /**
  * Класс MemTable с кастомизируемым объемом памяти
  */
-public class MemoryTable implements MemTable {
+public class MemTable implements MemoryTable {
     /** Мапа для хранения всех ключ-значений */
     private ConcurrentSkipListMap<String, String> table;
     /** Максимальный размер MemTable в байтах */
@@ -22,7 +21,7 @@ public class MemoryTable implements MemTable {
      * Конструктор MemTable по умолчанию, с максимальным размером памяти в 4МБ.
      * Внутри этот метод вызывает кастомный конструктор с предзаписанным размером.
      */
-    public MemoryTable() {
+    public MemTable() {
         this(4 * 1024 * 1024);
     }
 
@@ -30,7 +29,7 @@ public class MemoryTable implements MemTable {
      * Кастомный конструктор с изменяемым размером памяти
      * @param maxSizeInBytes Максимальный размер MemTable
      */
-    public MemoryTable(long maxSizeInBytes) {
+    public MemTable(long maxSizeInBytes) {
         this.table = new ConcurrentSkipListMap<>();
         this.maxSizeInBytes = maxSizeInBytes;
         this.currentSizeInBytes = 0;
@@ -86,7 +85,7 @@ public class MemoryTable implements MemTable {
      * @return Копия мапы
      */
     @Override
-    public synchronized Map<String, String> getEntries() {
+    public synchronized Map<String, String> getMap() {
         return new TreeMap<String, String>(table);
     }
 
