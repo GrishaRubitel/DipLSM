@@ -1,6 +1,8 @@
 package ru.choomandco.diplsm.storage.core;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,12 +60,17 @@ class ManifestHandler {
      * from the existing SSTable files.
      */
     private void rebuildManifest(String manifestFile) {
-        File baseDir = new File(manifestFile);
-        if (!baseDir.exists() || !baseDir.isDirectory()) {
-            throw new RuntimeException("SSTable dir not found: " + manifestFile);
+        File manifestDir = new File(manifestFile).getParentFile();
+
+        if (!manifestDir.exists()) {
+            try {
+                Files.createDirectories(manifestDir.toPath());
+            } catch (IOException e) {
+                throw new RuntimeException("Unable to create directory for MANIFEST", e);
+            }
         }
 
-        File[] levelDirs = baseDir.listFiles(File::isDirectory);
+        File[] levelDirs = manifestDir.listFiles(File::isDirectory);
         if (levelDirs != null) {
             for (File levelDir : levelDirs) {
                 if (levelDir.getName().matches("L\\d+")) {
@@ -79,8 +86,10 @@ class ManifestHandler {
             }
         }
 
+        // Теперь корректно записываем в файл
         writeManifestToFile(manifestFile);
     }
+
 
     /**
      * Writes the current state of the file levels to the SSTABLE_MANIFEST_FILE.

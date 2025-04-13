@@ -11,14 +11,12 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.ConcurrentSkipListMap;
 
 public class StorageCore implements DipLSMStorage {
     private final String SSTABLE_FOLDER = "./data/lsm/tables/";
     private final String SSTABLE_MANIFEST_PATH = "./data/lsm/MANIFEST";
     private final int LEVEL_ZERO = 0;
-
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     private MemoryTable memoryTable;
     private ManifestHandler manifestHandler;
@@ -36,8 +34,8 @@ public class StorageCore implements DipLSMStorage {
         this.manifestHandler = new ManifestHandler();
         manifestHandler.readManifest(SSTABLE_MANIFEST_PATH);
 
-        this.metadataMap = new HashMap<>();
-        for (int lvl = 1; lvl <= 3; lvl++) {
+        this.metadataMap = new ConcurrentSkipListMap<>();
+        for (int lvl = 0; lvl <= 2; lvl++) {
             this.metadataMap.put(lvl, new TreeSet<>());
         }
 
@@ -46,79 +44,46 @@ public class StorageCore implements DipLSMStorage {
 
     @Override
     public void put(String key, String value) {
-        lock.readLock().lock();
-        try {
-            if (memoryTable.put(key, value)) {
-                lock.writeLock().lock();
-                lock.readLock().unlock();
-                try {
-                    flush(LEVEL_ZERO);
-                } finally {
-                    lock.readLock().lock();
-                    lock.writeLock().unlock();
-                }
-            }
-        } finally {
-            lock.readLock().unlock();
+        if (memoryTable.put(key, value)) {
+            flush(LEVEL_ZERO);
         }
     }
 
     @Override
     public String get(String key) {
-        lock.readLock().lock();
-        try {
-            String memTableValue = memoryTable.get(key);
-            if (memTableValue != null) {
-                return memTableValue;
-            } else {
-                for (int level : new TreeSet<>(metadataMap.keySet())) {
-                    TreeSet<SSTableMetadata> tablesTree = metadataMap.get(level);
+        String memTableValue = memoryTable.get(key);
+        if (memTableValue != null) {
+            return memTableValue;
+        }
 
-                    for (SSTableMetadata meta : tablesTree) {
-                        if (meta.getBloomFilter().mightContain(key)) {
-                            SSTable table = new SSTable();
-                            return table.getByKey(key, meta.getFilename());
-                        }
-                    }
+        for (int level : new TreeSet<>(metadataMap.keySet())) {
+            for (SSTableMetadata meta : metadataMap.get(level)) {
+                if (meta.getBloomFilter().mightContain(key)) {
+                    return new SSTable().getByKey(key, meta.getFilename());
                 }
             }
-            return null;
-        } finally {
-            lock.readLock().unlock();
         }
+
+        return null;
     }
 
     @Override
     public void delete(String key) {
-        lock.readLock().lock();
-        try {
-            memoryTable.delete(key);
-        } finally {
-            lock.readLock().unlock();
-        }
+        memoryTable.delete(key);
     }
 
     @Override
-    public void flush(int level) {
-        lock.writeLock().lock();
-        try {
-            SortedStringTable newTable = new SSTable();
-            String filename = generateNewTableName();
-            newTable.writeTableFromMap(memoryTable.getMap(), filename);
+    public synchronized void flush(int level) {
+        SortedStringTable newTable = new SSTable();
+        Map<String, String> snapshot = new TreeMap<>(memoryTable.getMap()); // создаём копию!
 
-            SSTableMetadata meta = new SSTableMetadata(filename, level, memoryTable.getMap().keySet());
+        String filename = generateNewTableName(level);
+        newTable.writeTableFromMap(snapshot, filename);
 
-            TreeSet<SSTableMetadata> levelSet = metadataMap.get(level);
-            if (levelSet != null) {
-                levelSet.add(meta);
-            } else {
-                throw new IllegalArgumentException("Level " + level + " is not initialized in metadataMap.");
-            }
+        SSTableMetadata meta = new SSTableMetadata(filename, level, snapshot.keySet());
+        metadataMap.computeIfAbsent(level, k -> new TreeSet<>()).add(meta);
 
-            memoryTable.emptyMap();
-        } finally {
-            lock.writeLock().unlock();
-        }
+        memoryTable.emptyMap();
     }
 
     private void generateTableFolder() {
@@ -129,9 +94,9 @@ public class StorageCore implements DipLSMStorage {
         }
     }
 
-    private String generateNewTableName() {
+    private String generateNewTableName(int level) {
         String unixTime = String.valueOf(System.currentTimeMillis() / 1000L);
-        return SSTABLE_FOLDER + "sstable_" + unixTime + ".dat";
+        return SSTABLE_FOLDER + "L" + level + "/sstable_" + unixTime + ".dat";
     }
 
     private List<SSTableMetadata> buildMetadataList() {
@@ -149,27 +114,16 @@ public class StorageCore implements DipLSMStorage {
 
     private void startFlushTimer() {
         Thread thread = new Thread(() -> {
-            while (true) {
+            while (!Thread.currentThread().isInterrupted()) {
                 try {
-                    Thread.sleep(180000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
+                    Thread.sleep(180_000); // 3 минуты
 
-                lock.readLock().lock();
-                try {
                     if (!memoryTable.isEmpty()) {
-                        lock.readLock().unlock();
-                        lock.writeLock().lock();
-                        try {
-                            flush(LEVEL_ZERO);
-                        } finally {
-                            lock.writeLock().unlock();
-                        }
-                    } else {
-                        lock.readLock().unlock();
+                        flush(LEVEL_ZERO);
                     }
+
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt(); // корректно выходим
                 } catch (Exception e) {
                     e.printStackTrace();
                 }

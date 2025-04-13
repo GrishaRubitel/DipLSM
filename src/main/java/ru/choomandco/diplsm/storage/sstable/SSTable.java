@@ -20,34 +20,11 @@ public class SSTable implements SortedStringTable {
      */
     @Override
     public void writeTableFromMap(Map<String, String> memTableMap, String filename) {
-        try (RandomAccessFile file = new RandomAccessFile(filename, "rw")) {
-            Map<String, Long> index = new TreeMap<>();
-
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(filename))) {
             for (Map.Entry<String, String> entry : memTableMap.entrySet()) {
-                String key = entry.getKey();
-                String value = entry.getValue();
-
-                long offset = file.getFilePointer();
-                index.put(key, offset);
-
-                file.writeByte(key.length());
-                file.writeBytes(key);
-                file.writeByte(value.length());
-                file.writeBytes(value);
+                writer.write(entry.getKey() + ":" + entry.getValue());
+                writer.newLine();
             }
-
-            long indexOffset = file.getFilePointer();
-            for (Map.Entry<String, Long> entry : index.entrySet()) {
-                String key = entry.getKey();
-                long offset = entry.getValue();
-
-                file.writeByte(key.length());
-                file.writeBytes(key);
-                file.writeLong(offset);
-            }
-
-            file.writeLong(indexOffset);
-
         } catch (IOException e) {
             throw new RuntimeException("Failed to writeTableFromMap SSTable", e);
         }
@@ -60,38 +37,17 @@ public class SSTable implements SortedStringTable {
      */
     @Override
     public String getByKey(String key, String filename) {
-        try (RandomAccessFile sstableFile = new RandomAccessFile(filename, "r")) {
-            sstableFile.seek(sstableFile.length() - 8 - 8);
-            long indexStartOffset = sstableFile.readLong();
-
-            sstableFile.seek(indexStartOffset);
-
-            while (sstableFile.getFilePointer() < sstableFile.length() - 16) {
-                int keyLength = sstableFile.readByte();
-                byte[] keyBytes = new byte[keyLength];
-                sstableFile.readFully(keyBytes);
-                String indexKey = new String(keyBytes);
-
-                long dataOffset = sstableFile.readLong();
-
-                if (indexKey.equals(key)) {
-                    sstableFile.seek(dataOffset);
-
-                    int kLen = sstableFile.readByte();
-                    sstableFile.skipBytes(kLen);
-
-                    int valueLen = sstableFile.readByte();
-                    byte[] valueBytes = new byte[valueLen];
-                    sstableFile.readFully(valueBytes);
-
-                    return new String(valueBytes);
+        try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split(":", 2);
+                if (parts.length == 2 && parts[0].equals(key)) {
+                    return parts[1];
                 }
             }
-
         } catch (IOException e) {
-            throw new RuntimeException("Error finding value by key in SSTable: " + filename, e);
+            throw new RuntimeException("Error reading SSTable: " + filename, e);
         }
-
         return null;
     }
 
@@ -104,41 +60,16 @@ public class SSTable implements SortedStringTable {
     public Map<String, String> readWholeIntoMap(String filename) {
         Map<String, String> result = new TreeMap<>();
 
-        try (RandomAccessFile file = new RandomAccessFile(filename, "r")) {
-
-            file.seek(file.length() - 8);
-            long indexOffset = file.readLong();
-
-            file.seek(indexOffset);
-            Map<String, Long> offsets = new TreeMap<>();
-            while (file.getFilePointer() < file.length() - 8) {
-                int keyLen = file.readByte();
-                byte[] keyBytes = new byte[keyLen];
-                file.readFully(keyBytes);
-                String key = new String(keyBytes);
-
-                long dataOffset = file.readLong();
-                offsets.put(key, dataOffset);
+        try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split(":", 2);
+                if (parts.length == 2) {
+                    result.put(parts[0], parts[1]);
+                }
             }
-
-            for (Map.Entry<String, Long> entry : offsets.entrySet()) {
-                file.seek(entry.getValue());
-
-                int kLen = file.readByte();
-                byte[] kBytes = new byte[kLen];
-                file.readFully(kBytes);
-                String key = new String(kBytes);
-
-                int vLen = file.readByte();
-                byte[] vBytes = new byte[vLen];
-                file.readFully(vBytes);
-                String value = new String(vBytes);
-
-                result.put(key, value);
-            }
-
         } catch (IOException e) {
-            throw new RuntimeException("Error while reading full SSTable into map", e);
+            throw new RuntimeException("Error while reading SSTable into map: " + filename, e);
         }
 
         return result;
@@ -153,40 +84,13 @@ public class SSTable implements SortedStringTable {
     public List<String> readStringsIntoList(String filename) {
         List<String> result = new ArrayList<>();
 
-        try (RandomAccessFile file = new RandomAccessFile(filename, "r")) {
-            file.seek(file.length() - 8);
-            long indexOffset = file.readLong();
-
-            file.seek(indexOffset);
-            Map<String, Long> offsets = new TreeMap<>();
-            while (file.getFilePointer() < file.length() - 8) {
-                int keyLen = file.readByte();
-                byte[] keyBytes = new byte[keyLen];
-                file.readFully(keyBytes);
-                String key = new String(keyBytes);
-
-                long offset = file.readLong();
-                offsets.put(key, offset);
+        try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                result.add(line.replace(":", "="));
             }
-
-            for (Map.Entry<String, Long> entry : offsets.entrySet()) {
-                file.seek(entry.getValue());
-
-                int kLen = file.readByte();
-                byte[] kBytes = new byte[kLen];
-                file.readFully(kBytes);
-                String key = new String(kBytes);
-
-                int vLen = file.readByte();
-                byte[] vBytes = new byte[vLen];
-                file.readFully(vBytes);
-                String value = new String(vBytes);
-
-                result.add(key + "=" + value);
-            }
-
         } catch (IOException e) {
-            throw new RuntimeException("Error reading SSTable as lines", e);
+            throw new RuntimeException("Error reading SSTable lines from file: " + filename, e);
         }
 
         return result;
