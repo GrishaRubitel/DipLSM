@@ -71,8 +71,18 @@ public class StorageCore implements DipLSMStorage {
             if (memTableValue != null) {
                 return memTableValue;
             } else {
-                return "";
+                for (int level : new TreeSet<>(metadataMap.keySet())) {
+                    TreeSet<SSTableMetadata> tablesTree = metadataMap.get(level);
+
+                    for (SSTableMetadata meta : tablesTree) {
+                        if (meta.getBloomFilter().mightContain(key)) {
+                            SSTable table = new SSTable();
+                            return table.getByKey(key, meta.getFilename());
+                        }
+                    }
+                }
             }
+            return null;
         } finally {
             lock.readLock().unlock();
         }
