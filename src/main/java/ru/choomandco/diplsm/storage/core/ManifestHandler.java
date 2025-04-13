@@ -2,11 +2,12 @@ package ru.choomandco.diplsm.storage.core;
 
 import java.io.*;
 import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+//TODO дописать сохранение метаданных в манифест, проверить сбор метаданных при пустом манифесте
+//TODO проверить работоспособность манифеста вообще
 class ManifestHandler {
 
     private Map<String, Integer> fileLevels = new HashMap<>();

@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class StorageCore implements DipLSMStorage {
     private final String SSTABLE_FOLDER = "./data/lsm/tables/";
@@ -21,6 +22,7 @@ public class StorageCore implements DipLSMStorage {
     private MemoryTable memoryTable;
     private ManifestHandler manifestHandler;
     private Map<Integer, TreeSet<SSTableMetadata>> metadataMap;
+    private static final AtomicLong FILE_COUNTER = new AtomicLong();
 
     public StorageCore() {
         this(4L * 1024 * 1024);
@@ -89,14 +91,17 @@ public class StorageCore implements DipLSMStorage {
     private void generateTableFolder() {
         try {
             Files.createDirectories(Paths.get(SSTABLE_FOLDER));
+            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "L0"));
+            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "L1"));
+            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "L2"));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
     private String generateNewTableName(int level) {
-        String unixTime = String.valueOf(System.currentTimeMillis() / 1000L);
-        return SSTABLE_FOLDER + "L" + level + "/sstable_" + unixTime + ".dat";
+        String timestamp = System.currentTimeMillis() + "_" + FILE_COUNTER.incrementAndGet();
+        return SSTABLE_FOLDER + "L" + level + "/sstable_" + timestamp + ".dat";
     }
 
     private List<SSTableMetadata> buildMetadataList() {
@@ -116,7 +121,7 @@ public class StorageCore implements DipLSMStorage {
         Thread thread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
-                    Thread.sleep(180_000); // 3 минуты
+                    Thread.sleep(180000); // 3 минуты = 180000
 
                     if (!memoryTable.isEmpty()) {
                         flush(LEVEL_ZERO);
