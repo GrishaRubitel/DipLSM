@@ -40,5 +40,5 @@ build/
 git_diplsm
 git_diplsm.pub
 
-./data
+./data/*
 ./data/lsm/MANIFEST
