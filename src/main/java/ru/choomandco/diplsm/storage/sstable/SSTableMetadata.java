@@ -6,7 +6,7 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.function.Function;
 
-public class SSTableMetadata {
+public class SSTableMetadata implements Comparable<SSTableMetadata> {
     private final String filename;
     private int level;
     private String minKey;
@@ -25,6 +25,11 @@ public class SSTableMetadata {
         this.bloomFilter = new BloomFilter<String>(1024, new Function[]{ hash1, hash2 });
 
         bloomFilter.addKeysFromMap(keySet);
+    }
+
+    @Override
+    public int compareTo(SSTableMetadata meta) {
+        return this.filename.compareTo(meta.filename);
     }
 
     public String getFilename() {

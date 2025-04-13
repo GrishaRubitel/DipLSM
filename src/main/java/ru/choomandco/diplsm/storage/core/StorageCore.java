@@ -10,9 +10,7 @@ import ru.choomandco.diplsm.storage.sstable.SSTableMetadata;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class StorageCore implements DipLSMStorage {
@@ -24,7 +22,7 @@ public class StorageCore implements DipLSMStorage {
 
     private MemoryTable memoryTable;
     private ManifestHandler manifestHandler;
-    private List<SSTableMetadata> metadataList;
+    private Map<Integer, TreeSet<SSTableMetadata>> metadataMap;
 
     public StorageCore() {
         this(4L * 1024 * 1024);
@@ -38,7 +36,10 @@ public class StorageCore implements DipLSMStorage {
         this.manifestHandler = new ManifestHandler();
         manifestHandler.readManifest(SSTABLE_MANIFEST_PATH);
 
-        this.metadataList = buildMetadataList();
+        this.metadataMap = new HashMap<>();
+        for (int lvl = 1; lvl <= 3; lvl++) {
+            this.metadataMap.put(lvl, new TreeSet<>());
+        }
 
         startFlushTimer();
     }
@@ -66,7 +67,12 @@ public class StorageCore implements DipLSMStorage {
     public String get(String key) {
         lock.readLock().lock();
         try {
-            return memoryTable.get(key);
+            String memTableValue = memoryTable.get(key);
+            if (memTableValue != null) {
+                return memTableValue;
+            } else {
+                return "";
+            }
         } finally {
             lock.readLock().unlock();
         }
@@ -91,7 +97,13 @@ public class StorageCore implements DipLSMStorage {
             newTable.writeTableFromMap(memoryTable.getMap(), filename);
 
             SSTableMetadata meta = new SSTableMetadata(filename, level, memoryTable.getMap().keySet());
-            metadataList.add(meta);
+
+            TreeSet<SSTableMetadata> levelSet = metadataMap.get(level);
+            if (levelSet != null) {
+                levelSet.add(meta);
+            } else {
+                throw new IllegalArgumentException("Level " + level + " is not initialized in metadataMap.");
+            }
 
             memoryTable.emptyMap();
         } finally {
