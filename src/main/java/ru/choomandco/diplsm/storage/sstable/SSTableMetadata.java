@@ -2,6 +2,10 @@ package ru.choomandco.diplsm.storage.sstable;
 
 import ru.choomandco.diplsm.storage.bloomfilter.BloomFilter;
 
+import java.util.Collections;
+import java.util.Set;
+import java.util.function.Function;
+
 public class SSTableMetadata {
     private final String filename;
     private int level;
@@ -9,12 +13,18 @@ public class SSTableMetadata {
     private String maxKey;
     private BloomFilter<String> bloomFilter;
 
-    public SSTableMetadata(String filename, int level, String minKey, String maxKey, BloomFilter<String> bloomFilter) {
+    public SSTableMetadata(String filename, int level, Set<String> keySet) {
         this.filename = filename;
         this.level = level;
-        this.minKey = minKey;
-        this.maxKey = maxKey;
-        this.bloomFilter = bloomFilter;
+        this.minKey = Collections.min(keySet);
+        this.maxKey = Collections.max(keySet);
+
+        Function<String, Integer> hash1 = String::hashCode;
+        Function<String, Integer> hash2 = s -> s.hashCode() * 31;
+
+        this.bloomFilter = new BloomFilter<String>(1024, new Function[]{ hash1, hash2 });
+
+        bloomFilter.addKeysFromMap(keySet);
     }
 
     public String getFilename() {

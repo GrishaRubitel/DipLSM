@@ -60,7 +60,39 @@ public class SSTable implements SortedStringTable {
      */
     @Override
     public String getByKey(String key, String filename) {
-        return "jopa";
+        try (RandomAccessFile sstableFile = new RandomAccessFile(filename, "r")) {
+            sstableFile.seek(sstableFile.length() - 8 - 8);
+            long indexStartOffset = sstableFile.readLong();
+
+            sstableFile.seek(indexStartOffset);
+
+            while (sstableFile.getFilePointer() < sstableFile.length() - 16) {
+                int keyLength = sstableFile.readByte();
+                byte[] keyBytes = new byte[keyLength];
+                sstableFile.readFully(keyBytes);
+                String indexKey = new String(keyBytes);
+
+                long dataOffset = sstableFile.readLong();
+
+                if (indexKey.equals(key)) {
+                    sstableFile.seek(dataOffset);
+
+                    int kLen = sstableFile.readByte();
+                    sstableFile.skipBytes(kLen);
+
+                    int valueLen = sstableFile.readByte();
+                    byte[] valueBytes = new byte[valueLen];
+                    sstableFile.readFully(valueBytes);
+
+                    return new String(valueBytes);
+                }
+            }
+
+        } catch (IOException e) {
+            throw new RuntimeException("Error finding value by key in SSTable: " + filename, e);
+        }
+
+        return null;
     }
 
     /**

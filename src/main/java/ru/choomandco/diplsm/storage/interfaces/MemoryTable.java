@@ -9,4 +9,5 @@ public interface MemoryTable {
     Map<String, String> getMap();
     boolean isFull();
     void emptyMap();
+    boolean isEmpty();
 }

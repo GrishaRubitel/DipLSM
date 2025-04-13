@@ -5,56 +5,98 @@ import ru.choomandco.diplsm.storage.interfaces.MemoryTable;
 import ru.choomandco.diplsm.storage.interfaces.SortedStringTable;
 import ru.choomandco.diplsm.storage.memtable.MemTable;
 import ru.choomandco.diplsm.storage.sstable.SSTable;
+import ru.choomandco.diplsm.storage.sstable.SSTableMetadata;
 
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class StorageCore implements DipLSMStorage {
     private final String SSTABLE_FOLDER = "./data/lsm/tables/";
     private final String SSTABLE_MANIFEST_PATH = "./data/lsm/MANIFEST";
+    private final int LEVEL_ZERO = 0;
+
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     private MemoryTable memoryTable;
-    private ManifestHandler manifesthandler;
-    private List<SortedStringTable> sortedStringTableList;
+    private ManifestHandler manifestHandler;
+    private List<SSTableMetadata> metadataList;
 
     public StorageCore() {
         this(4L * 1024 * 1024);
     }
 
     public StorageCore(Long memTableMaxSize) {
-        this.memoryTable = new MemTable(memTableMaxSize);
-        this.manifesthandler = new ManifestHandler();
-        this.sortedStringTableList = new LinkedList<>();
         generateTableFolder();
-        manifesthandler.readManifest(SSTABLE_MANIFEST_PATH);
+
+        this.memoryTable = new MemTable(memTableMaxSize);
+
+        this.manifestHandler = new ManifestHandler();
+        manifestHandler.readManifest(SSTABLE_MANIFEST_PATH);
+
+        this.metadataList = buildMetadataList();
+
+        startFlushTimer();
     }
 
     @Override
     public void put(String key, String value) {
-         if (memoryTable.put(key, value)) {
-            flush();
-         }
+        lock.readLock().lock();
+        try {
+            if (memoryTable.put(key, value)) {
+                lock.writeLock().lock();
+                lock.readLock().unlock();
+                try {
+                    flush(LEVEL_ZERO);
+                } finally {
+                    lock.readLock().lock();
+                    lock.writeLock().unlock();
+                }
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
     public String get(String key) {
-        return memoryTable.get(key);
+        lock.readLock().lock();
+        try {
+            return memoryTable.get(key);
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
     public void delete(String key) {
-        memoryTable.delete(key);
+        lock.readLock().lock();
+        try {
+            memoryTable.delete(key);
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     @Override
-    public void flush() {
-        SortedStringTable newTable = new SSTable();
-        newTable.writeTableFromMap(memoryTable.getMap(), generateNewTableName());
+    public void flush(int level) {
+        lock.writeLock().lock();
+        try {
+            SortedStringTable newTable = new SSTable();
+            String filename = generateNewTableName();
+            newTable.writeTableFromMap(memoryTable.getMap(), filename);
 
-        sortedStringTableList.add(newTable);
+            SSTableMetadata meta = new SSTableMetadata(filename, level, memoryTable.getMap().keySet());
+            metadataList.add(meta);
+
+            memoryTable.emptyMap();
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     private void generateTableFolder() {
@@ -68,5 +110,51 @@ public class StorageCore implements DipLSMStorage {
     private String generateNewTableName() {
         String unixTime = String.valueOf(System.currentTimeMillis() / 1000L);
         return SSTABLE_FOLDER + "sstable_" + unixTime + ".dat";
+    }
+
+    private List<SSTableMetadata> buildMetadataList() {
+        List<SSTableMetadata> newMetadataList = new LinkedList<>();
+        for (Map.Entry<String, Integer> entry : manifestHandler.getFileLevels().entrySet()) {
+            SortedStringTable table = new SSTable();
+            Map<String, String> tableMap = table.readWholeIntoMap(entry.getKey());
+
+            SSTableMetadata meta = new SSTableMetadata(entry.getKey(), entry.getValue(), tableMap.keySet());
+            newMetadataList.add(meta);
+        }
+
+        return newMetadataList;
+    }
+
+    private void startFlushTimer() {
+        Thread thread = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(180000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+
+                lock.readLock().lock();
+                try {
+                    if (!memoryTable.isEmpty()) {
+                        lock.readLock().unlock();
+                        lock.writeLock().lock();
+                        try {
+                            flush(LEVEL_ZERO);
+                        } finally {
+                            lock.writeLock().unlock();
+                        }
+                    } else {
+                        lock.readLock().unlock();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+
+        thread.setDaemon(true);
+        thread.start();
     }
 }

@@ -105,4 +105,9 @@ public class MemTable implements MemoryTable {
     public void emptyMap() {
         table.clear();
     }
+
+    @Override
+    public boolean isEmpty() {
+        return table.isEmpty();
+    }
 }

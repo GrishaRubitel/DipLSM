@@ -13,16 +13,16 @@ public class BloomFilter<T> {
         this.hashFunctions = hashFunctions;
     }
 
-    public void add(T element) {
+    public void add(T key) {
         for (Function<T, Integer> hashFunction : hashFunctions) {
-            int hash = hashFunction.apply(element);
+            int hash = hashFunction.apply(key);
             bitSet.set(Math.abs(hash) % bitSet.size(), true);
         }
     }
 
-    public boolean mightContain(T element) {
+    public boolean mightContain(T key) {
         for (Function<T, Integer> hashFunction : hashFunctions) {
-            int hash = hashFunction.apply(element);
+            int hash = hashFunction.apply(key);
             if (!bitSet.get(Math.abs(hash) % bitSet.size())) {
                 return false;
             }

@@ -9,6 +9,10 @@ class ManifestHandler {
 
     private Map<String, Integer> fileLevels = new HashMap<>();
 
+    public Map<String, Integer> getFileLevels() {
+        return fileLevels;
+    }
+
     /**
      * Method reads MANIFEST file. In case if file doesn't exist, method creates file and scans
      * existing folders and files and writes new MANIFEST file, if necessary
