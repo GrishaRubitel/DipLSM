@@ -2,52 +2,73 @@ package ru.choomandco.diplsm.storage.core;
 
 import java.io.*;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.CRC32;
 
 //TODO дописать сохранение метаданных в манифест, проверить сбор метаданных при пустом манифесте
 //TODO проверить работоспособность манифеста вообще
 class ManifestHandler {
+    private static final String MANIFEST_PATH = "./data/lsm/MANIFEST";
 
-    private Map<String, Integer> fileLevels = new HashMap<>();
+    private final Map<String, Integer> fileTiers = new HashMap<>();
 
-    public Map<String, Integer> getFileLevels() {
-        return fileLevels;
+    public Map<String, Integer> getFileTiers() {
+        return fileTiers;
     }
 
     /**
      * Method reads MANIFEST file. In case if file doesn't exist, method creates file and scans
      * existing folders and files and writes new MANIFEST file, if necessary
      */
-    void readManifest(String manifestFilpath) {
-        File file = new File(manifestFilpath);
+    public void readManifest(String tablesPath) {
+        File file = new File(MANIFEST_PATH);
 
         if (file.exists()) {
-            loadExistingManifest(file);
+            if (!loadAndVerifyManifest()) {
+                System.out.println("MANIFEST corrupted or invalid CRC, rebuilding...");
+                rebuildManifest(tablesPath);
+            }
         } else {
-            System.out.println("No MANIFEST file, scanning dirs...");
-            rebuildManifest(manifestFilpath);
+            System.out.println("No MANIFEST found, scanning...");
+            rebuildManifest(tablesPath);
         }
     }
 
     /**
      * Method loads data from MANIFEST file
-     * @param manifestFile MANIFEST file
      */
-    private void loadExistingManifest(File manifestFile) {
-        try (BufferedReader reader = new BufferedReader(new FileReader(manifestFile))) {
+    private boolean loadAndVerifyManifest() {
+        try (BufferedReader reader = new BufferedReader(new FileReader(MANIFEST_PATH))) {
+            String crcLine = reader.readLine();
+            if (crcLine == null || !crcLine.startsWith("#CRC=")) return false;
+
+            long expectedCRC = Long.parseLong(crcLine.substring(5));
+            CRC32 crc = new CRC32();
+
             String line;
+            List<String> entries = new ArrayList<>();
             while ((line = reader.readLine()) != null) {
-                String[] parts = line.split(" ");
+                crc.update(line.getBytes());
+                entries.add(line);
+            }
+
+            if (crc.getValue() != expectedCRC) return false;
+
+            for (String entry : entries) {
+                String[] parts = entry.split(" ");
                 if (parts.length == 2) {
                     String fileName = parts[1];
-                    int level = Integer.parseInt(parts[0].substring(1));
-                    fileLevels.put(fileName, level);
+                    int tier = Integer.parseInt(parts[0].substring(1));
+                    fileTiers.put(fileName, tier);
                 }
             }
+            return true;
         } catch (IOException e) {
-            throw new RuntimeException("Error while reading MANIFEST file - ", e);
+            System.err.println("Error reading MANIFEST: " + e.getMessage());
+            return false;
         }
     }
 
@@ -60,37 +81,35 @@ class ManifestHandler {
      * This method is called when the manifest file is missing or needs to be rebuilt
      * from the existing SSTable files.
      */
-    private void rebuildManifest(String manifestFile) {
-        File manifestDir = new File(manifestFile).getParentFile();
+    private void rebuildManifest(String tablesPath) {
+        File baseDir = new File(tablesPath);
+        File parent = baseDir.getParentFile();
 
-        if (!manifestDir.exists()) {
+        if (!parent.exists()) {
             try {
-                Files.createDirectories(manifestDir.toPath());
+                Files.createDirectories(parent.toPath());
             } catch (IOException e) {
-                throw new RuntimeException("Unable to create directory for MANIFEST", e);
+                throw new RuntimeException("Cannot create directory for MANIFEST", e);
             }
         }
 
-        File[] levelDirs = manifestDir.listFiles(File::isDirectory);
-        if (levelDirs != null) {
-            for (File levelDir : levelDirs) {
-                if (levelDir.getName().matches("L\\d+")) {
-                    int level = Integer.parseInt(levelDir.getName().substring(1));
-                    File[] sstableFiles = levelDir.listFiles((dir, name) -> name.endsWith(".dat"));
-
-                    if (sstableFiles != null) {
-                        for (File sstableFile : sstableFiles) {
-                            fileLevels.put(sstableFile.getName(), level);
+        File[] tierDirs = parent.listFiles(File::isDirectory);
+        if (tierDirs != null) {
+            for (File dir : tierDirs) {
+                if (dir.getName().matches("T\\d+")) {
+                    int tier = Integer.parseInt(dir.getName().substring(1));
+                    File[] sstables = dir.listFiles((d, name) -> name.endsWith(".dat"));
+                    if (sstables != null) {
+                        for (File sstable : sstables) {
+                            fileTiers.put(sstable.getName(), tier);
                         }
                     }
                 }
             }
         }
 
-        // Теперь корректно записываем в файл
-        writeManifestToFile(manifestFile);
+        writeManifest();
     }
-
 
     /**
      * Writes the current state of the file levels to the SSTABLE_MANIFEST_FILE.
@@ -103,26 +122,43 @@ class ManifestHandler {
      *
      * @throws RuntimeException if an I/O error occurs while writing the manifest file
      */
-    private void writeManifestToFile(String manifestFile) {
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(manifestFile))) {
-            for (Map.Entry<String, Integer> entry : fileLevels.entrySet()) {
-                writer.write("L" + entry.getValue() + " " + entry.getKey());
+    private void writeManifest() {
+        List<String> entries = new ArrayList<>();
+        for (Map.Entry<String, Integer> entry : fileTiers.entrySet()) {
+            entries.add("T" + entry.getValue() + " " + entry.getKey());
+        }
+
+        CRC32 crc = new CRC32();
+        for (String entry : entries) {
+            crc.update(entry.getBytes());
+        }
+
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(MANIFEST_PATH))) {
+            writer.write("#CRC=" + crc.getValue());
+            writer.newLine();
+            for (String entry : entries) {
+                writer.write(entry);
                 writer.newLine();
             }
         } catch (IOException e) {
-            throw new RuntimeException("Error while writing MANIFEST file - ", e);
+            throw new RuntimeException("Error writing MANIFEST", e);
         }
     }
 
-    void increaseLevelOfTable(String table, String manifestFile) {
-        fileLevels.put(table, fileLevels.get(table) + 1);
-        writeManifestToFile(manifestFile);
+    public void updateFileTier(String filename, int newTier) {
+        fileTiers.put(filename, newTier);
+        writeManifest();
     }
 
-    void increaseLevelOfTable(List<String> tables, String manifestFile) {
-        for (String table : tables) {
-            fileLevels.put(table, fileLevels.get(table) + 1);
+    public void updateFilesTier(List<String> filenames, int newTier) {
+        for (String filename : filenames) {
+            fileTiers.put(filename, newTier);
         }
-        writeManifestToFile(manifestFile);
+        writeManifest();
+    }
+
+    public void addNewFile(String filename, int tier) {
+        fileTiers.put(filename, tier);
+        writeManifest();
     }
 }

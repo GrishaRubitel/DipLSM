@@ -16,7 +16,6 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class StorageCore implements DipLSMStorage {
     private final String SSTABLE_FOLDER = "./data/lsm/tables/";
-    private final String SSTABLE_MANIFEST_PATH = "./data/lsm/MANIFEST";
     private final int LEVEL_ZERO = 0;
 
     private MemoryTable memoryTable;
@@ -34,7 +33,7 @@ public class StorageCore implements DipLSMStorage {
         this.memoryTable = new MemTable(memTableMaxSize);
 
         this.manifestHandler = new ManifestHandler();
-        manifestHandler.readManifest(SSTABLE_MANIFEST_PATH);
+        manifestHandler.readManifest(SSTABLE_FOLDER);
 
         this.metadataMap = new ConcurrentSkipListMap<>();
         for (int lvl = 0; lvl <= 2; lvl++) {
@@ -75,15 +74,28 @@ public class StorageCore implements DipLSMStorage {
     }
 
     @Override
-    public synchronized void flush(int level) {
+    public synchronized void flush(int tier) {
+        if (memoryTable.isEmpty()) return;
+
         SortedStringTable newTable = new SSTable();
-        Map<String, String> snapshot = new TreeMap<>(memoryTable.getMap()); // создаём копию!
+        Map<String, String> snapshot = new TreeMap<>(memoryTable.getMap());
 
-        String filename = generateNewTableName(level);
-        newTable.writeTableFromMap(snapshot, filename);
+        // 1. Создание временного файла
+        String tempFilename = generateNewTableName(tier) + ".temp";
+        newTable.writeTableFromMap(snapshot, tempFilename);
 
-        SSTableMetadata meta = new SSTableMetadata(filename, level, snapshot.keySet());
-        metadataMap.computeIfAbsent(level, k -> new TreeSet<>()).add(meta);
+        // 2. Переименование после записи
+        String finalFilename = tempFilename.replace(".temp", "");
+        File tempFile = new File(tempFilename);
+        File finalFile = new File(finalFilename);
+        if (!tempFile.renameTo(finalFile)) {
+            throw new RuntimeException("Failed to rename SSTable temp file to final file");
+        }
+
+        // 3. Обновление манифеста и метаданных
+        manifestHandler.addNewFile(finalFilename, tier);
+        SSTableMetadata meta = new SSTableMetadata(finalFilename, tier, snapshot.keySet());
+        metadataMap.computeIfAbsent(tier, k -> new TreeSet<>()).add(meta);
 
         memoryTable.emptyMap();
     }
@@ -91,22 +103,22 @@ public class StorageCore implements DipLSMStorage {
     private void generateTableFolder() {
         try {
             Files.createDirectories(Paths.get(SSTABLE_FOLDER));
-            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "L0"));
-            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "L1"));
-            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "L2"));
+            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "T0"));
+            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "T1"));
+            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "T2"));
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private String generateNewTableName(int level) {
+    private String generateNewTableName(int tier) {
         String timestamp = System.currentTimeMillis() + "_" + FILE_COUNTER.incrementAndGet();
-        return SSTABLE_FOLDER + "L" + level + "/sstable_" + timestamp + ".dat";
+        return SSTABLE_FOLDER + "T" + tier + "/sstable_" + timestamp + ".dat";
     }
 
     private List<SSTableMetadata> buildMetadataList() {
         List<SSTableMetadata> newMetadataList = new LinkedList<>();
-        for (Map.Entry<String, Integer> entry : manifestHandler.getFileLevels().entrySet()) {
+        for (Map.Entry<String, Integer> entry : manifestHandler.getFileTiers().entrySet()) {
             SortedStringTable table = new SSTable();
             Map<String, String> tableMap = table.readWholeIntoMap(entry.getKey());
 
@@ -128,7 +140,7 @@ public class StorageCore implements DipLSMStorage {
                     }
 
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt(); // корректно выходим
+                    Thread.currentThread().interrupt();
                 } catch (Exception e) {
                     e.printStackTrace();
                 }

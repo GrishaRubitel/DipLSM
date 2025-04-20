@@ -1,5 +1,6 @@
 package ru.choomandco.diplsm.storage.sstable;
 
+import ru.choomandco.diplsm.exception.invalid.crc.InvalidCRC;
 import ru.choomandco.diplsm.storage.interfaces.SortedStringTable;
 
 import java.io.*;
@@ -7,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.zip.CRC32;
 
 /**
  * Класс SSTable
@@ -21,10 +23,22 @@ public class SSTable implements SortedStringTable {
     @Override
     public void writeTableFromMap(Map<String, String> memTableMap, String filename) {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(filename))) {
+            CRC32 crc = new CRC32();
+            StringBuilder contentBuffer = new StringBuilder();
+
             for (Map.Entry<String, String> entry : memTableMap.entrySet()) {
-                writer.write(entry.getKey() + ":" + entry.getValue());
-                writer.newLine();
+                String line = entry.getKey() + ":" + entry.getValue();
+                contentBuffer.append(line).append("\n");
             }
+
+            byte[] dataBytes = contentBuffer.toString().getBytes();
+            crc.update(dataBytes);
+
+            writer.write("#CRC=" + crc.getValue());
+            writer.newLine();
+
+            writer.write(contentBuffer.toString());
+
         } catch (IOException e) {
             throw new RuntimeException("Failed to writeTableFromMap SSTable", e);
         }
@@ -38,6 +52,7 @@ public class SSTable implements SortedStringTable {
     @Override
     public String getByKey(String key, String filename) {
         try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
+            verifyCRC(reader, filename);
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] parts = line.split(":", 2);
@@ -45,6 +60,8 @@ public class SSTable implements SortedStringTable {
                     return parts[1];
                 }
             }
+        } catch (InvalidCRC e) {
+            throw new RuntimeException(e);
         } catch (IOException e) {
             throw new RuntimeException("Error reading SSTable: " + filename, e);
         }
@@ -61,6 +78,7 @@ public class SSTable implements SortedStringTable {
         Map<String, String> result = new TreeMap<>();
 
         try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
+            verifyCRC(reader, filename);
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] parts = line.split(":", 2);
@@ -68,6 +86,8 @@ public class SSTable implements SortedStringTable {
                     result.put(parts[0], parts[1]);
                 }
             }
+        } catch (InvalidCRC e) {
+            throw new RuntimeException(e);
         } catch (IOException e) {
             throw new RuntimeException("Error while reading SSTable into map: " + filename, e);
         }
@@ -85,14 +105,52 @@ public class SSTable implements SortedStringTable {
         List<String> result = new ArrayList<>();
 
         try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
+            verifyCRC(reader, filename);
             String line;
             while ((line = reader.readLine()) != null) {
                 result.add(line.replace(":", "="));
             }
+        } catch (InvalidCRC e) {
+            throw new RuntimeException(e);
         } catch (IOException e) {
             throw new RuntimeException("Error reading SSTable lines from file: " + filename, e);
         }
 
         return result;
+    }
+
+    private void verifyCRC(BufferedReader reader, String filename) throws InvalidCRC {
+        try {
+            reader.mark(1024 * 1024);
+
+            String crcLine = reader.readLine();
+            if (crcLine == null || !crcLine.startsWith("#CRC=")) {
+                throw new InvalidCRC("Missing or malformed CRC line in file: " + filename);
+            }
+
+            long expectedCrc = Long.parseLong(crcLine.substring(5));
+            StringBuilder content = new StringBuilder();
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                content.append(line).append("\n");
+            }
+
+            CRC32 crc = new CRC32();
+            crc.update(content.toString().getBytes());
+            long actualCrc = crc.getValue();
+
+            if (actualCrc != expectedCrc) {
+                throw new InvalidCRC("CRC mismatch in file: " + filename +
+                        ", expected=" + expectedCrc + ", actual=" + actualCrc);
+            }
+
+            reader.reset();
+
+            reader.readLine();
+
+        } catch (IOException e) {
+            throw new RuntimeException("Error during CRC verification in file: " + filename, e);
+        }
     }
 }
