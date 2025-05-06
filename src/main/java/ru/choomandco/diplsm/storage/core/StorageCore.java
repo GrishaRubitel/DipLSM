@@ -17,11 +17,11 @@ import java.util.concurrent.atomic.AtomicLong;
 public class StorageCore implements DipLSMStorage {
     private final String SSTABLE_FOLDER = "./data/lsm/tables/";
     private final int LEVEL_ZERO = 0;
+    private static final AtomicLong FILE_COUNTER = new AtomicLong();
 
     private MemoryTable memoryTable;
     private ManifestHandler manifestHandler;
     private Map<Integer, TreeSet<SSTableMetadata>> metadataMap;
-    private static final AtomicLong FILE_COUNTER = new AtomicLong();
 
     public StorageCore() {
         this(4L * 1024 * 1024);
@@ -38,6 +38,11 @@ public class StorageCore implements DipLSMStorage {
         this.metadataMap = new ConcurrentSkipListMap<>();
         for (int lvl = 0; lvl <= 2; lvl++) {
             this.metadataMap.put(lvl, new TreeSet<>());
+        }
+
+        for (Map.Entry<String, Integer> entry : manifestHandler.getFileTiers().entrySet()) {
+            SSTableMetadata meta = new SSTableMetadata(entry.getKey(), entry.getValue(), new SSTable().readWholeIntoMap(entry.getKey()).keySet());
+            metadataMap.get(entry.getValue()).add(meta);
         }
 
         startFlushTimer();
@@ -80,11 +85,9 @@ public class StorageCore implements DipLSMStorage {
         SortedStringTable newTable = new SSTable();
         Map<String, String> snapshot = new TreeMap<>(memoryTable.getMap());
 
-        // 1. Создание временного файла
         String tempFilename = generateNewTableName(tier) + ".temp";
         newTable.writeTableFromMap(snapshot, tempFilename);
 
-        // 2. Переименование после записи
         String finalFilename = tempFilename.replace(".temp", "");
         File tempFile = new File(tempFilename);
         File finalFile = new File(finalFilename);
@@ -92,7 +95,6 @@ public class StorageCore implements DipLSMStorage {
             throw new RuntimeException("Failed to rename SSTable temp file to final file");
         }
 
-        // 3. Обновление манифеста и метаданных
         manifestHandler.addNewFile(finalFilename, tier);
         SSTableMetadata meta = new SSTableMetadata(finalFilename, tier, snapshot.keySet());
         metadataMap.computeIfAbsent(tier, k -> new TreeSet<>()).add(meta);

@@ -8,14 +8,14 @@ import java.util.function.Function;
 
 public class SSTableMetadata implements Comparable<SSTableMetadata> {
     private final String filename;
-    private int level;
+    private int tier;
     private String minKey;
     private String maxKey;
     private BloomFilter<String> bloomFilter;
 
-    public SSTableMetadata(String filename, int level, Set<String> keySet) {
+    public SSTableMetadata(String filename, int tier, Set<String> keySet) {
         this.filename = filename;
-        this.level = level;
+        this.tier = tier;
         this.minKey = Collections.min(keySet);
         this.maxKey = Collections.max(keySet);
 
@@ -36,8 +36,8 @@ public class SSTableMetadata implements Comparable<SSTableMetadata> {
         return filename;
     }
 
-    public int getLevel() {
-        return level;
+    public int getTier() {
+        return tier;
     }
 
     public String getMinKey() {
@@ -52,12 +52,12 @@ public class SSTableMetadata implements Comparable<SSTableMetadata> {
         return bloomFilter;
     }
 
-    public void increaseLevel() {
-        level++;
+    public void increaseTier() {
+        tier++;
     }
 
-    public void decreaseLevel() {
-        level--;
+    public void decreaseTier() {
+        tier--;
     }
 
     public void setMinKey(String minKey) {

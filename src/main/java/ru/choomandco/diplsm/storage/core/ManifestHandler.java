@@ -8,8 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.CRC32;
 
-//TODO дописать сохранение метаданных в манифест, проверить сбор метаданных при пустом манифесте
-//TODO проверить работоспособность манифеста вообще
 class ManifestHandler {
     private static final String MANIFEST_PATH = "./data/lsm/MANIFEST";
 
@@ -20,8 +18,8 @@ class ManifestHandler {
     }
 
     /**
-     * Method reads MANIFEST file. In case if file doesn't exist, method creates file and scans
-     * existing folders and files and writes new MANIFEST file, if necessary
+     * Метод читает файл MANIFEST. В случае, если файл не существует, метод создает файл и
+     * сканирует существующие папки и файлы и записывает новый файл MANIFEST, если необходимо
      */
     public void readManifest(String tablesPath) {
         File file = new File(MANIFEST_PATH);
@@ -38,7 +36,7 @@ class ManifestHandler {
     }
 
     /**
-     * Method loads data from MANIFEST file
+     * Метод загружает информацию из MANIFEST
      */
     private boolean loadAndVerifyManifest() {
         try (BufferedReader reader = new BufferedReader(new FileReader(MANIFEST_PATH))) {
@@ -73,13 +71,13 @@ class ManifestHandler {
     }
 
     /**
-     * Rebuilds the SSTable manifest by scanning the SSTable directory structure.
-     * It searches for directories representing different levels (e.g., L1, L2, etc.),
-     * and adds all SSTable files found in these directories to the manifest.
-     * The method then writes the updated manifest to the SSTABLE_MANIFEST_FILE.
+     * Переписывает MANIFEST, сканируя каталоги SSTable.
+     * Он ищет каталоги, представляющие различные уровни (например, T1, T2 и T3),
+     * и добавляет все файлы SSTable, найденные в этих каталогах, в манифест.
+     * Затем метод записывает обновленный манифест в SSTABLE_MANIFEST_FILE.
      *
-     * This method is called when the manifest file is missing or needs to be rebuilt
-     * from the existing SSTable files.
+     * Этот метод вызывается, когда файл манифеста отсутствует или его необходимо перестроить
+     * из существующих файлов SSTable.
      */
     private void rebuildManifest(String tablesPath) {
         File baseDir = new File(tablesPath);
@@ -112,15 +110,15 @@ class ManifestHandler {
     }
 
     /**
-     * Writes the current state of the file levels to the SSTABLE_MANIFEST_FILE.
-     * This method iterates over the fileLevels map and records each SSTable file's
-     * name along with its corresponding level in the manifest file.
-     * The manifest file is completely overwritten with the updated contents.
+     * Записывает текущее состояние уровней файла в SSTABLE_MANIFEST_FILE.
+     * Метод перебирает карту fileLevels и записывает имя каждого файла SSTable
+     * вместе с его соответствующим уровнем в файле манифеста.
+     * Файл манифеста полностью перезаписывается обновленным содержимым.
      *
-     * This method is typically called when the file structure needs to be recorded or
-     * when the manifest needs to be generated from scratch.
+     * Этот метод обычно вызывается, когда необходимо записать структуру файла или
+     * когда необходимо сгенерировать манифест с нуля.
      *
-     * @throws RuntimeException if an I/O error occurs while writing the manifest file
+     * @throws RuntimeException если при записи файла манифеста произошла ошибка ввода-вывода
      */
     private void writeManifest() {
         List<String> entries = new ArrayList<>();
@@ -147,13 +145,6 @@ class ManifestHandler {
 
     public void updateFileTier(String filename, int newTier) {
         fileTiers.put(filename, newTier);
-        writeManifest();
-    }
-
-    public void updateFilesTier(List<String> filenames, int newTier) {
-        for (String filename : filenames) {
-            fileTiers.put(filename, newTier);
-        }
         writeManifest();
     }
 
