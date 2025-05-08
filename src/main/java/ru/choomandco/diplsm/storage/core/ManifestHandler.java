@@ -1,5 +1,7 @@
 package ru.choomandco.diplsm.storage.core;
 
+import ru.choomandco.diplsm.storage.sstable.SSTableMetadata;
+
 import java.io.*;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -81,17 +83,17 @@ class ManifestHandler {
      */
     private void rebuildManifest(String tablesPath) {
         File baseDir = new File(tablesPath);
-        File parent = baseDir.getParentFile();
+//        File parent = baseDir.getParentFile();
+//
+//        if (!parent.exists()) {
+//            try {
+//                Files.createDirectories(parent.toPath());
+//            } catch (IOException e) {
+//                throw new RuntimeException("Cannot create directory for MANIFEST", e);
+//            }
+//        }
 
-        if (!parent.exists()) {
-            try {
-                Files.createDirectories(parent.toPath());
-            } catch (IOException e) {
-                throw new RuntimeException("Cannot create directory for MANIFEST", e);
-            }
-        }
-
-        File[] tierDirs = parent.listFiles(File::isDirectory);
+        File[] tierDirs = baseDir.listFiles(File::isDirectory);
         if (tierDirs != null) {
             for (File dir : tierDirs) {
                 if (dir.getName().matches("T\\d+")) {
@@ -99,7 +101,7 @@ class ManifestHandler {
                     File[] sstables = dir.listFiles((d, name) -> name.endsWith(".dat"));
                     if (sstables != null) {
                         for (File sstable : sstables) {
-                            fileTiers.put(sstable.getName(), tier);
+                            fileTiers.put(dir + "\\" + sstable.getName(), tier);
                         }
                     }
                 }
@@ -150,6 +152,14 @@ class ManifestHandler {
 
     public void addNewFile(String filename, int tier) {
         fileTiers.put(filename, tier);
+        writeManifest();
+    }
+
+    public void postCompactationRebuild(List<SSTableMetadata> listToDelete, SSTableMetadata newFile) {
+        fileTiers.put(newFile.getFilename(), newFile.getTier());
+        for (SSTableMetadata meta : listToDelete) {
+            fileTiers.remove(meta.getFilename());
+        }
         writeManifest();
     }
 }

@@ -3,19 +3,33 @@ package ru.choomandco.diplsm.storage.compengine;
 import ru.choomandco.diplsm.storage.sstable.SSTable;
 import ru.choomandco.diplsm.storage.sstable.SSTableMetadata;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.io.IOException;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class CompactationEngine {
 
-    //TODO переписать
-    public void compact(List<SSTableMetadata> tablesMeta) {
+    //TODO дописать
+    public SSTableMetadata compact(List<SSTableMetadata> tablesMeta, String fileToCompact, int level) {
         if (tablesMeta.isEmpty()) {
             throw new IllegalArgumentException("No SSTables provided for compaction");
         }
-        List<String> allEntries = new ArrayList<>();
+
+        Map<String, String> allEntries = new TreeMap<>();
         for (SSTableMetadata meta : tablesMeta) {
-            allEntries.addAll(new SSTable().readStringsIntoList(meta.getFilename()));
+            allEntries.putAll(new SSTable().readWholeIntoMap(meta.getFilename()));
         }
+
+        new SSTable().writeTableFromMap(allEntries, fileToCompact);
+
+        for (SSTableMetadata file : tablesMeta) {
+            try {
+                new SSTable().deleteFIle(file.getFilename());
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        return new SSTableMetadata(fileToCompact, level, allEntries.keySet());
     }
 }

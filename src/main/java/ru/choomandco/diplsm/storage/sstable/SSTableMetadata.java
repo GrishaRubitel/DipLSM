@@ -3,6 +3,7 @@ package ru.choomandco.diplsm.storage.sstable;
 import ru.choomandco.diplsm.storage.bloomfilter.BloomFilter;
 
 import java.util.Collections;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -12,6 +13,7 @@ public class SSTableMetadata implements Comparable<SSTableMetadata> {
     private String minKey;
     private String maxKey;
     private BloomFilter<String> bloomFilter;
+    private long createdAt;
 
     public SSTableMetadata(String filename, int tier, Set<String> keySet) {
         this.filename = filename;
@@ -28,8 +30,17 @@ public class SSTableMetadata implements Comparable<SSTableMetadata> {
     }
 
     @Override
-    public int compareTo(SSTableMetadata meta) {
-        return this.filename.compareTo(meta.filename);
+    public int compareTo(SSTableMetadata other) {
+        if (Objects.equals(this.filename, other.getFilename())) {
+            return 0;
+        }
+
+        return Long.compare(extractTimestamp(this.filename), extractTimestamp(other.filename)) * (-1);
+    }
+
+    private long extractTimestamp(String filename) {
+        String[] parts = filename.split("_");
+        return Long.parseLong(parts[1]);
     }
 
     public String getFilename() {

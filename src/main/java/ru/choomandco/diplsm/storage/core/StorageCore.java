@@ -1,5 +1,6 @@
 package ru.choomandco.diplsm.storage.core;
 
+import ru.choomandco.diplsm.storage.compengine.CompactationEngine;
 import ru.choomandco.diplsm.storage.interfaces.DipLSMStorage;
 import ru.choomandco.diplsm.storage.interfaces.MemoryTable;
 import ru.choomandco.diplsm.storage.interfaces.SortedStringTable;
@@ -17,26 +18,36 @@ import java.util.concurrent.atomic.AtomicLong;
 public class StorageCore implements DipLSMStorage {
     private final String SSTABLE_FOLDER = "./data/lsm/tables/";
     private final int LEVEL_ZERO = 0;
-    private static final AtomicLong FILE_COUNTER = new AtomicLong();
+    private final int NUM_OF_LEVELS = 5;
+    private final AtomicLong FILE_COUNTER = new AtomicLong();
+    private int tierThreshold;
+    private int levelZeroTableCounter = 0;
 
     private MemoryTable memoryTable;
     private ManifestHandler manifestHandler;
+    private CompactationEngine compactationEngine;
     private Map<Integer, TreeSet<SSTableMetadata>> metadataMap;
 
     public StorageCore() {
-        this(4L * 1024 * 1024);
+        this(4L * 1024 * 1024, 5);
     }
 
     public StorageCore(Long memTableMaxSize) {
+        this(memTableMaxSize, 5);
+    }
+
+    public StorageCore(Long memTableMaxSize, int sstableTierThreshlod) {
+        tierThreshold = sstableTierThreshlod;
+
         generateTableFolder();
 
-        this.memoryTable = new MemTable(memTableMaxSize);
+        memoryTable = new MemTable(memTableMaxSize);
 
-        this.manifestHandler = new ManifestHandler();
+        manifestHandler = new ManifestHandler();
         manifestHandler.readManifest(SSTABLE_FOLDER);
 
-        this.metadataMap = new ConcurrentSkipListMap<>();
-        for (int lvl = 0; lvl <= 2; lvl++) {
+        metadataMap = new ConcurrentSkipListMap<>();
+        for (int lvl = 0; lvl < NUM_OF_LEVELS; lvl++) {
             this.metadataMap.put(lvl, new TreeSet<>());
         }
 
@@ -45,6 +56,12 @@ public class StorageCore implements DipLSMStorage {
             metadataMap.get(entry.getValue()).add(meta);
         }
 
+        compactationEngine = new CompactationEngine();
+
+        levelZeroTableCounter = metadataMap.get(LEVEL_ZERO).size();
+        while (levelZeroTableCounter >= tierThreshold) {
+            compactationInitialization(LEVEL_ZERO);
+        }
         startFlushTimer();
     }
 
@@ -100,14 +117,16 @@ public class StorageCore implements DipLSMStorage {
         metadataMap.computeIfAbsent(tier, k -> new TreeSet<>()).add(meta);
 
         memoryTable.emptyMap();
+
+        checkForCompactation(LEVEL_ZERO);
     }
 
     private void generateTableFolder() {
         try {
             Files.createDirectories(Paths.get(SSTABLE_FOLDER));
-            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "T0"));
-            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "T1"));
-            Files.createDirectories(Paths.get(SSTABLE_FOLDER + "T2"));
+            for (int i = 0; i < NUM_OF_LEVELS; i++) {
+                Files.createDirectories(Paths.get(SSTABLE_FOLDER + "T" + i));
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -151,5 +170,33 @@ public class StorageCore implements DipLSMStorage {
 
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private void compactationInitialization(int level) {
+        List<SSTableMetadata> listToCompact = metadataMap.get(level).stream()
+                                    .sorted()
+                                    .limit(tierThreshold)
+                                    .toList();
+
+        int targetLevel = (level == NUM_OF_LEVELS - 1) ? level : level + 1;
+        SSTableMetadata newMeta = compactationEngine.compact(new ArrayList<>(listToCompact), generateNewTableName(targetLevel), targetLevel);
+
+        metadataMap.get(level).removeAll(listToCompact);
+
+        metadataMap.get(newMeta.getTier()).add(newMeta);
+
+        manifestHandler.postCompactationRebuild(listToCompact, newMeta);
+    }
+
+    private void checkForCompactation(int level) {
+        if (metadataMap.get(level).size() >= tierThreshold) {
+            compactationInitialization(level);
+            checkForCompactation(level + 1);
+        }
+    }
+
+    //TODO удалить перед релизом
+    public void forceCompact() {
+        compactationInitialization(LEVEL_ZERO);
     }
 }

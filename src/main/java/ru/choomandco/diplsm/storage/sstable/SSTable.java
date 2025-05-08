@@ -4,17 +4,15 @@ import ru.choomandco.diplsm.exception.invalid.crc.InvalidCRC;
 import ru.choomandco.diplsm.storage.interfaces.SortedStringTable;
 
 import java.io.*;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.*;
 import java.util.zip.CRC32;
 
 /**
  * Класс SSTable
  */
 public class SSTable implements SortedStringTable {
-
     /**
      * Метод пишет мапу MemTable в новый SSTable.
      * @param memTableMap Мапа с данными из MemTable
@@ -117,6 +115,11 @@ public class SSTable implements SortedStringTable {
         }
 
         return result;
+    }
+
+    @Override
+    public void deleteFIle(String filename) throws IOException {
+        Files.delete(Paths.get(filename));
     }
 
     private void verifyCRC(BufferedReader reader, String filename) throws InvalidCRC {
