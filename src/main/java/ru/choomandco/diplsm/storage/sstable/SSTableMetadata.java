@@ -13,7 +13,6 @@ public class SSTableMetadata implements Comparable<SSTableMetadata> {
     private String minKey;
     private String maxKey;
     private BloomFilter<String> bloomFilter;
-    private long createdAt;
 
     public SSTableMetadata(String filename, int tier, Set<String> keySet) {
         this.filename = filename;

@@ -3,7 +3,6 @@ package ru.choomandco.diplsm.storage.core;
 import ru.choomandco.diplsm.storage.sstable.SSTableMetadata;
 
 import java.io.*;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -11,8 +10,6 @@ import java.util.Map;
 import java.util.zip.CRC32;
 
 class ManifestHandler {
-    private static final String MANIFEST_PATH = "./data/lsm/MANIFEST";
-
     private final Map<String, Integer> fileTiers = new HashMap<>();
 
     public Map<String, Integer> getFileTiers() {
@@ -23,25 +20,25 @@ class ManifestHandler {
      * Метод читает файл MANIFEST. В случае, если файл не существует, метод создает файл и
      * сканирует существующие папки и файлы и записывает новый файл MANIFEST, если необходимо
      */
-    public void readManifest(String tablesPath) {
-        File file = new File(MANIFEST_PATH);
+    public void readManifest(String tablesPath, String manifestPath) {
+        File file = new File(manifestPath);
 
         if (file.exists()) {
-            if (!loadAndVerifyManifest()) {
+            if (!loadAndVerifyManifest(manifestPath)) {
                 System.out.println("MANIFEST corrupted or invalid CRC, rebuilding...");
-                rebuildManifest(tablesPath);
+                rebuildManifest(tablesPath, manifestPath);
             }
         } else {
             System.out.println("No MANIFEST found, scanning...");
-            rebuildManifest(tablesPath);
+            rebuildManifest(tablesPath, manifestPath);
         }
     }
 
     /**
      * Метод загружает информацию из MANIFEST
      */
-    private boolean loadAndVerifyManifest() {
-        try (BufferedReader reader = new BufferedReader(new FileReader(MANIFEST_PATH))) {
+    private boolean loadAndVerifyManifest(String manifestPath) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(manifestPath))) {
             String crcLine = reader.readLine();
             if (crcLine == null || !crcLine.startsWith("#CRC=")) return false;
 
@@ -81,7 +78,7 @@ class ManifestHandler {
      * Этот метод вызывается, когда файл манифеста отсутствует или его необходимо перестроить
      * из существующих файлов SSTable.
      */
-    private void rebuildManifest(String tablesPath) {
+    private void rebuildManifest(String tablesPath, String manifestPath) {
         File baseDir = new File(tablesPath);
 //        File parent = baseDir.getParentFile();
 //
@@ -108,7 +105,7 @@ class ManifestHandler {
             }
         }
 
-        writeManifest();
+        writeManifest(manifestPath);
     }
 
     /**
@@ -122,7 +119,7 @@ class ManifestHandler {
      *
      * @throws RuntimeException если при записи файла манифеста произошла ошибка ввода-вывода
      */
-    private void writeManifest() {
+    private void writeManifest(String manifestPath) {
         List<String> entries = new ArrayList<>();
         for (Map.Entry<String, Integer> entry : fileTiers.entrySet()) {
             entries.add("T" + entry.getValue() + " " + entry.getKey());
@@ -133,7 +130,7 @@ class ManifestHandler {
             crc.update(entry.getBytes());
         }
 
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(MANIFEST_PATH))) {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(manifestPath))) {
             writer.write("#CRC=" + crc.getValue());
             writer.newLine();
             for (String entry : entries) {
@@ -145,21 +142,21 @@ class ManifestHandler {
         }
     }
 
-    public void updateFileTier(String filename, int newTier) {
+    public void updateFileTier(String filename, int newTier, String manifestPath) {
         fileTiers.put(filename, newTier);
-        writeManifest();
+        writeManifest(manifestPath);
     }
 
-    public void addNewFile(String filename, int tier) {
+    public void addNewFile(String filename, int tier, String manifestPath) {
         fileTiers.put(filename, tier);
-        writeManifest();
+        writeManifest(manifestPath);
     }
 
-    public void postCompactationRebuild(List<SSTableMetadata> listToDelete, SSTableMetadata newFile) {
+    public void postCompactationRebuild(List<SSTableMetadata> listToDelete, SSTableMetadata newFile, String manifestPath) {
         fileTiers.put(newFile.getFilename(), newFile.getTier());
         for (SSTableMetadata meta : listToDelete) {
             fileTiers.remove(meta.getFilename());
         }
-        writeManifest();
+        writeManifest(manifestPath);
     }
 }

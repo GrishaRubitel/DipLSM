@@ -6,13 +6,13 @@ public class Main {
     public static void main(String[] args) {
         StorageCore lsmCore = new StorageCore(40L, 5);
 
-//        for (int i = 1; i <= 20; i++) {
-//            String key = "user_" + i;
-//            String value = "User Name 30" + i;
-//            lsmCore.put(key, value);
-//        }
+        for (int i = 1; i <= 20; i++) {
+            String key = "user_" + i;
+            String value = "User Name 30" + i;
+            lsmCore.put(key, value);
+        }
 
-//        lsmCore.forceCompact();
+        lsmCore.forceCompact();
 
         for (int i = 1; i <= 20; i++) {
             String key = "user_" + i;

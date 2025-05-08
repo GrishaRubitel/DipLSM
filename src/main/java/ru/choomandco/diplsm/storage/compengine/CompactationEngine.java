@@ -5,11 +5,9 @@ import ru.choomandco.diplsm.storage.sstable.SSTableMetadata;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class CompactationEngine {
 
-    //TODO дописать
     public SSTableMetadata compact(List<SSTableMetadata> tablesMeta, String fileToCompact, int level) {
         if (tablesMeta.isEmpty()) {
             throw new IllegalArgumentException("No SSTables provided for compaction");

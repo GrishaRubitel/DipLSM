@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class StorageCore implements DipLSMStorage {
     private final String SSTABLE_FOLDER = "./data/lsm/tables/";
+    private final String MANIFEST_PATH = "./data/lsm/MANIFEST";
     private final int LEVEL_ZERO = 0;
     private final int NUM_OF_LEVELS = 5;
     private final AtomicLong FILE_COUNTER = new AtomicLong();
@@ -44,7 +45,7 @@ public class StorageCore implements DipLSMStorage {
         memoryTable = new MemTable(memTableMaxSize);
 
         manifestHandler = new ManifestHandler();
-        manifestHandler.readManifest(SSTABLE_FOLDER);
+        manifestHandler.readManifest(SSTABLE_FOLDER, MANIFEST_PATH);
 
         metadataMap = new ConcurrentSkipListMap<>();
         for (int lvl = 0; lvl < NUM_OF_LEVELS; lvl++) {
@@ -112,7 +113,7 @@ public class StorageCore implements DipLSMStorage {
             throw new RuntimeException("Failed to rename SSTable temp file to final file");
         }
 
-        manifestHandler.addNewFile(finalFilename, tier);
+        manifestHandler.addNewFile(finalFilename, tier, MANIFEST_PATH);
         SSTableMetadata meta = new SSTableMetadata(finalFilename, tier, snapshot.keySet());
         metadataMap.computeIfAbsent(tier, k -> new TreeSet<>()).add(meta);
 
@@ -185,7 +186,7 @@ public class StorageCore implements DipLSMStorage {
 
         metadataMap.get(newMeta.getTier()).add(newMeta);
 
-        manifestHandler.postCompactationRebuild(listToCompact, newMeta);
+        manifestHandler.postCompactationRebuild(listToCompact, newMeta, MANIFEST_PATH);
     }
 
     private void checkForCompactation(int level) {
