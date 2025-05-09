@@ -13,21 +13,25 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.Executors;
 
 public class StorageCore implements DipLSMStorage {
-    private final String SSTABLE_FOLDER = "./data/lsm/tables/";
-    private final String MANIFEST_PATH = "./data/lsm/MANIFEST";
-    private final int LEVEL_ZERO = 0;
-    private final int NUM_OF_LEVELS = 5;
-    private final AtomicLong FILE_COUNTER = new AtomicLong();
-    private int tierThreshold;
-    private int levelZeroTableCounter = 0;
+    protected final String SSTABLE_FOLDER = "./data/lsm/tables/";
+    protected final String MANIFEST_PATH = "./data/lsm/MANIFEST";
+    protected final int LEVEL_ZERO = 0;
+    protected final int NUM_OF_LEVELS = 5;
+    protected final AtomicLong FILE_COUNTER = new AtomicLong();
+    protected int tierThreshold;
+    protected int levelZeroTableCounter = 0;
 
-    private MemoryTable memoryTable;
-    private ManifestHandler manifestHandler;
-    private CompactationEngine compactationEngine;
-    private Map<Integer, TreeSet<SSTableMetadata>> metadataMap;
+    protected MemoryTable memoryTable;
+    protected ManifestHandler manifestHandler;
+    protected CompactationEngine compactationEngine;
+    protected Map<Integer, TreeSet<SSTableMetadata>> metadataMap;
+
+    protected final ExecutorService flushExecutor = Executors.newSingleThreadExecutor();
 
     public StorageCore() {
         this(4L * 1024 * 1024, 5);
@@ -59,9 +63,10 @@ public class StorageCore implements DipLSMStorage {
 
         compactationEngine = new CompactationEngine();
 
-        levelZeroTableCounter = metadataMap.get(LEVEL_ZERO).size();
-        while (levelZeroTableCounter >= tierThreshold) {
-            compactationInitialization(LEVEL_ZERO);
+        for (Map.Entry<Integer, TreeSet<SSTableMetadata>> entry : metadataMap.entrySet()) {
+            while (entry.getValue().size() >= tierThreshold) {
+                compactationInitialization(entry.getKey());
+            }
         }
         startFlushTimer();
     }
@@ -80,13 +85,19 @@ public class StorageCore implements DipLSMStorage {
             return memTableValue;
         }
 
-        for (int level : new TreeSet<>(metadataMap.keySet())) {
-            for (SSTableMetadata meta : metadataMap.get(level)) {
-                if (meta.getBloomFilter().mightContain(key)) {
-                    return new SSTable().getByKey(key, meta.getFilename());
+        try {
+            for (int level : new TreeSet<>(metadataMap.keySet())) {
+                for (SSTableMetadata meta : metadataMap.get(level)) {
+                    if (meta.getBloomFilter().mightContain(key)) {
+                        return new SSTable().getByKey(key, meta.getFilename());
+                    }
                 }
             }
+        } catch (Exception e) {
+            System.out.println("Error while itterating - " + e);
+            return null;
         }
+
 
         return null;
     }
@@ -98,13 +109,14 @@ public class StorageCore implements DipLSMStorage {
 
     @Override
     public synchronized void flush(int tier) {
-        if (memoryTable.isEmpty()) return;
+        if (memoryTable.isEmpty()) {
+            return;
+        }
 
-        SortedStringTable newTable = new SSTable();
         Map<String, String> snapshot = new TreeMap<>(memoryTable.getMap());
 
         String tempFilename = generateNewTableName(tier) + ".temp";
-        newTable.writeTableFromMap(snapshot, tempFilename);
+        new SSTable().writeTableFromMap(snapshot, tempFilename);
 
         String finalFilename = tempFilename.replace(".temp", "");
         File tempFile = new File(tempFilename);
@@ -122,23 +134,45 @@ public class StorageCore implements DipLSMStorage {
         checkForCompactation(LEVEL_ZERO);
     }
 
-    private void generateTableFolder() {
-        try {
-            Files.createDirectories(Paths.get(SSTABLE_FOLDER));
-            for (int i = 0; i < NUM_OF_LEVELS; i++) {
-                Files.createDirectories(Paths.get(SSTABLE_FOLDER + "T" + i));
+    protected void checkForCompactation(int level) {
+        if (metadataMap.get(level).size() >= tierThreshold) {
+            compactationInitialization(level);
+            if (level + 1 != NUM_OF_LEVELS) {
+                checkForCompactation(level + 1);
             }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
         }
     }
 
-    private String generateNewTableName(int tier) {
+    protected void compactationInitialization(int level) {
+        List<SSTableMetadata> listToCompact = metadataMap.get(level).stream()
+                                    .sorted()
+                                    .limit(tierThreshold)
+                                    .toList();
+
+        int targetLevel = (level == NUM_OF_LEVELS - 1) ? level : level + 1;
+        if (listToCompact.isEmpty()) {
+            return;
+        }
+        SSTableMetadata newMeta = compactationEngine.compact(new ArrayList<>(listToCompact), generateNewTableName(targetLevel), targetLevel);
+
+        metadataMap.get(level).removeAll(listToCompact);
+
+        metadataMap.get(newMeta.getTier()).add(newMeta);
+
+        manifestHandler.postCompactationRebuild(listToCompact, newMeta, MANIFEST_PATH);
+    }
+
+    //TODO удалить перед релизом
+    public void forceCompact() {
+        compactationInitialization(LEVEL_ZERO);
+    }
+
+    protected String generateNewTableName(int tier) {
         String timestamp = System.currentTimeMillis() + "_" + FILE_COUNTER.incrementAndGet();
         return SSTABLE_FOLDER + "T" + tier + "/sstable_" + timestamp + ".dat";
     }
 
-    private List<SSTableMetadata> buildMetadataList() {
+    protected List<SSTableMetadata> buildMetadataList() {
         List<SSTableMetadata> newMetadataList = new LinkedList<>();
         for (Map.Entry<String, Integer> entry : manifestHandler.getFileTiers().entrySet()) {
             SortedStringTable table = new SSTable();
@@ -151,7 +185,7 @@ public class StorageCore implements DipLSMStorage {
         return newMetadataList;
     }
 
-    private void startFlushTimer() {
+    protected void startFlushTimer() {
         Thread thread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
@@ -173,31 +207,14 @@ public class StorageCore implements DipLSMStorage {
         thread.start();
     }
 
-    private void compactationInitialization(int level) {
-        List<SSTableMetadata> listToCompact = metadataMap.get(level).stream()
-                                    .sorted()
-                                    .limit(tierThreshold)
-                                    .toList();
-
-        int targetLevel = (level == NUM_OF_LEVELS - 1) ? level : level + 1;
-        SSTableMetadata newMeta = compactationEngine.compact(new ArrayList<>(listToCompact), generateNewTableName(targetLevel), targetLevel);
-
-        metadataMap.get(level).removeAll(listToCompact);
-
-        metadataMap.get(newMeta.getTier()).add(newMeta);
-
-        manifestHandler.postCompactationRebuild(listToCompact, newMeta, MANIFEST_PATH);
-    }
-
-    private void checkForCompactation(int level) {
-        if (metadataMap.get(level).size() >= tierThreshold) {
-            compactationInitialization(level);
-            checkForCompactation(level + 1);
+    protected void generateTableFolder() {
+        try {
+            Files.createDirectories(Paths.get(SSTABLE_FOLDER));
+            for (int i = 0; i < NUM_OF_LEVELS; i++) {
+                Files.createDirectories(Paths.get(SSTABLE_FOLDER + "T" + i));
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
-    }
-
-    //TODO удалить перед релизом
-    public void forceCompact() {
-        compactationInitialization(LEVEL_ZERO);
     }
 }

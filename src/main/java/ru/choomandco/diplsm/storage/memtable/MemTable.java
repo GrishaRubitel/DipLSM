@@ -103,6 +103,7 @@ public class MemTable implements MemoryTable {
      */
     @Override
     public void emptyMap() {
+        currentSizeInBytes = 0;
         table.clear();
     }
 

@@ -34,7 +34,7 @@ public class SSTableMetadata implements Comparable<SSTableMetadata> {
             return 0;
         }
 
-        return Long.compare(extractTimestamp(this.filename), extractTimestamp(other.filename)) * (-1);
+        return Long.compare(extractTimestamp(this.filename), extractTimestamp(other.filename));
     }
 
     private long extractTimestamp(String filename) {

@@ -4,15 +4,15 @@ import ru.choomandco.diplsm.storage.core.StorageCore;
 
 public class Main {
     public static void main(String[] args) {
-        StorageCore lsmCore = new StorageCore(40L, 5);
+        StorageCore lsmCore = new StorageCore(100L, 5);
 
-        for (int i = 1; i <= 20; i++) {
+        for (int i = 1; i <= 1000; i++) {
             String key = "user_" + i;
             String value = "User Name 30" + i;
             lsmCore.put(key, value);
         }
 
-        lsmCore.forceCompact();
+        lsmCore.flush(0);
 
         for (int i = 1; i <= 20; i++) {
             String key = "user_" + i;

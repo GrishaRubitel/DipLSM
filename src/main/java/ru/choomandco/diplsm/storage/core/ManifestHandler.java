@@ -29,7 +29,7 @@ class ManifestHandler {
                 rebuildManifest(tablesPath, manifestPath);
             }
         } else {
-            System.out.println("No MANIFEST found, scanning...");
+            System.out.println("No MANIFEST found, rebuilding...");
             rebuildManifest(tablesPath, manifestPath);
         }
     }

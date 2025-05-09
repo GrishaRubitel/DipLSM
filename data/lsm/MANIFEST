@@ -1,5 +1,0 @@
-#CRC=217600660
-T1 ./data/lsm/tables/T1/sstable_1746741885732_6.dat
-T1 ./data/lsm/tables/T1/sstable_1746741885769_18.dat
-T1 ./data/lsm/tables/T1/sstable_1746741885786_22.dat
-T1 ./data/lsm/tables/T1/sstable_1746741885751_12.dat
