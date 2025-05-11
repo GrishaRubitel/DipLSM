@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 public class StorageCore implements DipLSMStorage {
     protected final String SSTABLE_FOLDER = "./data/lsm/tables/";
@@ -24,7 +25,6 @@ public class StorageCore implements DipLSMStorage {
     protected final int NUM_OF_LEVELS = 5;
     protected final AtomicLong FILE_COUNTER = new AtomicLong();
     protected int tierThreshold;
-    protected int levelZeroTableCounter = 0;
 
     protected MemoryTable memoryTable;
     protected ManifestHandler manifestHandler;
@@ -87,7 +87,12 @@ public class StorageCore implements DipLSMStorage {
 
         try {
             for (int level : new TreeSet<>(metadataMap.keySet())) {
-                for (SSTableMetadata meta : metadataMap.get(level)) {
+                TreeSet<SSTableMetadata> levelSet = metadataMap.get(level);
+                if (levelSet == null) continue;
+
+                Iterator<SSTableMetadata> descendingIterator = levelSet.descendingIterator();
+                while (descendingIterator.hasNext()) {
+                    SSTableMetadata meta = descendingIterator.next();
                     if (meta.getBloomFilter().mightContain(key)) {
                         return new SSTable().getByKey(key, meta.getFilename());
                     }
@@ -147,7 +152,7 @@ public class StorageCore implements DipLSMStorage {
         List<SSTableMetadata> listToCompact = metadataMap.get(level).stream()
                                     .sorted()
                                     .limit(tierThreshold)
-                                    .toList();
+                                    .collect(Collectors.toList());
 
         int targetLevel = (level == NUM_OF_LEVELS - 1) ? level : level + 1;
         if (listToCompact.isEmpty()) {

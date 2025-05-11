@@ -1,9 +1,9 @@
 package ru.choomandco.diplsm;
 
-import ru.choomandco.diplsm.storage.core.StorageCore;
 import ru.choomandco.diplsm.storage.core.StorageCoreAsync;
 import ru.choomandco.diplsm.storage.interfaces.DipLSMStorage;
 
+import java.io.File;
 import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
@@ -14,19 +14,14 @@ import java.util.concurrent.atomic.AtomicLong;
 public class LoadTest {
 
     private final DipLSMStorage storage;
-    // Эталонная карта в памяти
     private final ConcurrentMap<String, String> reference = new ConcurrentHashMap<>();
-
     private final Random rnd = new Random();
     private final long testDurationMillis;
-    private final int checkEvery; // каждые N операций — проверка
+    private final int checkEvery;
 
-    // Счётчики операций
     private final AtomicLong puts = new AtomicLong();
     private final AtomicLong gets = new AtomicLong();
     private final AtomicLong mismatches = new AtomicLong();
-
-    // Временные метрики (наносекунды)
     private final AtomicLong totalPutTime = new AtomicLong();
     private final AtomicLong totalGetTime = new AtomicLong();
 
@@ -38,11 +33,12 @@ public class LoadTest {
 
     public void run() {
         long endTime = System.currentTimeMillis() + testDurationMillis;
+        long nextStatusTime = System.currentTimeMillis() + 20_000;
         long ops = 0;
 
         while (System.currentTimeMillis() < endTime) {
             String key = "key-" + rnd.nextInt(10_000);
-            // 50/50 PUT или GET
+
             if (rnd.nextBoolean()) {
                 // PUT
                 String value = UUID.randomUUID().toString();
@@ -61,27 +57,29 @@ public class LoadTest {
                 gets.incrementAndGet();
             }
 
-            // Периодическая контрольная проверка
+            // Периодическая проверка
             if (++ops % checkEvery == 0) {
                 String ref = reference.get(key);
                 String actual = storage.get(key);
-                System.out.printf("Control check key=%s: expected=%s, actual=%s%n",
-                        key, ref, actual);
-                if (ref != null & actual != null & !Objects.equals(ref, actual)) {
-                    System.err.println("Mismatch for key");
+                if (ref != null && actual != null && !Objects.equals(ref, actual)) {
+                    System.err.printf("Mismatch for key=%s: expected=%s, actual=%s%n", key, ref, actual);
                     mismatches.incrementAndGet();
                 }
             }
+
+            // Признак жизни
+            if (System.currentTimeMillis() >= nextStatusTime) {
+                System.out.println("Test in progress...");
+                nextStatusTime += 20_000;
+            }
         }
 
-        // Вычисляем средние времена
         long putCount = puts.get();
         long getCount = gets.get();
 
         double avgPutMs = putCount > 0 ? (totalPutTime.get() / 1_000_000.0) / putCount : 0.0;
         double avgGetMs = getCount > 0 ? (totalGetTime.get() / 1_000_000.0) / getCount : 0.0;
 
-        // Итоги
         System.out.println("=== Load Test Completed ===");
         System.out.printf("Duration (ms): %d%n", testDurationMillis);
         System.out.printf("Operations:    %d (total)%n", ops);
@@ -90,20 +88,38 @@ public class LoadTest {
         System.out.printf("Mismatches:    %d%n", mismatches.get());
     }
 
+    private static void deleteDataDirectory(File dir) {
+        if (!dir.exists()) return;
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.isDirectory()) {
+                    deleteDataDirectory(file);
+                } else {
+                    file.delete();
+                }
+            }
+        }
+        dir.delete();
+    }
+
     public static void main(String[] args) {
-        long duration = 1L * 60_000L;
-        int checkEvery = 1_000;
+//        // Удаление ./data
+//        System.out.println("Deleting ./data directory...");
+//        deleteDataDirectory(new File("./data"));
 
-        if (args.length >= 1) {
-            duration = Long.parseLong(args[0]);
-        }
-        if (args.length >= 2) {
-            checkEvery = Integer.parseInt(args[1]);
-        }
+        // Первая фаза — 1 минута
+        System.out.println("=== Phase 1: short run ===");
+        DipLSMStorage storage1 = new StorageCoreAsync(1L * 256 * 1024, 5);
+        new LoadTest(storage1, 60_000L, 1_000).run();
 
-        DipLSMStorage storage = new StorageCoreAsync(500L, 3);
+//        // Удаление ./data
+//        System.out.println("Deleting ./data directory...");
+//        deleteDataDirectory(new File("./data"));
 
-        LoadTest test = new LoadTest(storage, duration, checkEvery);
-        test.run();
+        // Вторая фаза — 10 минут
+        System.out.println("=== Phase 2: long run ===");
+        DipLSMStorage storage2 = new StorageCoreAsync(5L * 1024 * 1024, 5);
+        new LoadTest(storage2, 600_000L, 1_000).run();
     }
 }
