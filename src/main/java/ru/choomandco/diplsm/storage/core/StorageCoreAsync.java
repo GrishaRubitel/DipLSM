@@ -23,8 +23,6 @@ public class StorageCoreAsync extends StorageCore{
 
     @Override
     public synchronized void flush(int tier) {
-        //checkForCompactation(LEVEL_ZERO);
-
         if (memoryTable.isEmpty()) {
             return;
         }
@@ -49,6 +47,7 @@ public class StorageCoreAsync extends StorageCore{
 
                 SSTableMetadata meta = new SSTableMetadata(finalFilename, tier, snapshot.keySet());
                 metadataMap.computeIfAbsent(tier, k -> new TreeSet<>()).add(meta);
+                checkForCompactation(LEVEL_ZERO);
             } catch (Exception e) {
                 e.printStackTrace();
             }

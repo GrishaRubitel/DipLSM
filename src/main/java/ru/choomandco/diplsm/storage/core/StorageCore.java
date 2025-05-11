@@ -153,10 +153,8 @@ public class StorageCore implements DipLSMStorage {
         if (listToCompact.isEmpty()) {
             return;
         }
-        SSTableMetadata newMeta = compactationEngine.compact(new ArrayList<>(listToCompact), generateNewTableName(targetLevel), targetLevel);
-
         metadataMap.get(level).removeAll(listToCompact);
-
+        SSTableMetadata newMeta = compactationEngine.compact(new ArrayList<>(listToCompact), generateNewTableName(targetLevel), targetLevel);
         metadataMap.get(newMeta.getTier()).add(newMeta);
 
         manifestHandler.postCompactationRebuild(listToCompact, newMeta, MANIFEST_PATH);

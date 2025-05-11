@@ -41,4 +41,5 @@ git_diplsm
 git_diplsm.pub
 
 ./data/*
+./data/lsm/tables/*
 ./data/lsm/MANIFEST
