@@ -18,29 +18,57 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
+/**
+ * Основной класс реализации LSM-хранилища.
+ * Отвечает за работу с MemTable, SSTable, а также управление флашами, компактацией и метаданными.
+ */
 public class StorageCore implements DipLSMStorage {
+    /** Путь к директории, где хранятся SSTable-файлы */
     protected final String SSTABLE_FOLDER = "./data/lsm/tables/";
+    /** Путь к файлу MANIFEST, содержащему информацию об уровнях хранения SSTable-файлов */
     protected final String MANIFEST_PATH = "./data/lsm/MANIFEST";
+    /** Нулевой уровень в иерархии уровней LSM */
     protected final int LEVEL_ZERO = 0;
+    /** Общее количество уровней в LSM */
     protected final int NUM_OF_LEVELS = 5;
+    /** Счётчик файлов, используемый для генерации уникальных имён SSTable */
     protected final AtomicLong FILE_COUNTER = new AtomicLong();
+    /** Порог количества SSTable-файлов на уровень, после которого запускается компактация */
     protected int tierThreshold;
 
+    /** MemTable — структура в памяти для временного хранения данных */
     protected MemoryTable memoryTable;
+    /** Объект для работы с MANIFEST-файлом */
     protected ManifestHandler manifestHandler;
+    /** Движок компактации SSTable-файлов */
     protected CompactationEngine compactationEngine;
+    /** Метаданные всех SSTable-файлов, отсортированные по уровням */
     protected Map<Integer, TreeSet<SSTableMetadata>> metadataMap;
 
+    /** Поток для выполнения флашей из памяти на диск */
     protected final ExecutorService flushExecutor = Executors.newSingleThreadExecutor();
 
+    /**
+     * Конструктор по умолчанию.
+     * Использует размер MemTable по умолчанию и порог компактации = 5.
+     */
     public StorageCore() {
-        this(4L * 1024 * 1024, 5);
+        this(1024L * 1024, 5);
     }
 
+    /**
+     * Конструктор с пользовательским размером MemTable.
+     * @param memTableMaxSize максимальный размер MemTable в байтах
+     */
     public StorageCore(Long memTableMaxSize) {
         this(memTableMaxSize, 5);
     }
 
+    /**
+     * Основной конструктор, инициализирует хранилище, директории, читает MANIFEST и восстанавливает метаданные.
+     * @param memTableMaxSize максимальный размер MemTable
+     * @param sstableTierThreshlod порог количества файлов на уровень до компактации
+     */
     public StorageCore(Long memTableMaxSize, int sstableTierThreshlod) {
         tierThreshold = sstableTierThreshlod;
 
@@ -71,6 +99,9 @@ public class StorageCore implements DipLSMStorage {
         startFlushTimer();
     }
 
+    /**
+     * Записывает ключ-значение в память. Если MemTable переполнена — вызывается flush.
+     */
     @Override
     public void put(String key, String value) {
         if (memoryTable.put(key, value)) {
@@ -78,6 +109,9 @@ public class StorageCore implements DipLSMStorage {
         }
     }
 
+    /**
+     * Получает значение по ключу, сначала из памяти, затем из SSTable-файлов.
+     */
     @Override
     public String get(String key) {
         String memTableValue = memoryTable.get(key);
@@ -107,11 +141,18 @@ public class StorageCore implements DipLSMStorage {
         return null;
     }
 
+    /**
+     * Удаляет ключ из памяти (логическое удаление).
+     */
     @Override
     public void delete(String key) {
         memoryTable.delete(key);
     }
 
+    /**
+     * Выполняет флаш MemTable на диск в SSTable-файл, после чего очищает MemTable.
+     * Также обновляет MANIFEST и метаданные.
+     */
     @Override
     public synchronized void flush(int tier) {
         if (memoryTable.isEmpty()) {
@@ -139,6 +180,10 @@ public class StorageCore implements DipLSMStorage {
         checkForCompactation(LEVEL_ZERO);
     }
 
+    /**
+     * Проверяет, нужно ли запускать компактацию на указанном уровне.
+     * При необходимости вызывает рекурсивно на следующий уровень.
+     */
     protected void checkForCompactation(int level) {
         if (metadataMap.get(level).size() >= tierThreshold) {
             compactationInitialization(level);
@@ -148,6 +193,10 @@ public class StorageCore implements DipLSMStorage {
         }
     }
 
+    /**
+     * Инициализирует компактацию файлов на заданном уровне.
+     * Компактация перемещает данные на следующий уровень и обновляет метаданные.
+     */
     protected void compactationInitialization(int level) {
         List<SSTableMetadata> listToCompact = metadataMap.get(level).stream()
                                     .sorted()
@@ -166,28 +215,38 @@ public class StorageCore implements DipLSMStorage {
     }
 
     //TODO удалить перед релизом
+    /**
+     * Принудительная компактация нулевого уровня. Используется в отладочных целях.
+     */
     public void forceCompact() {
         compactationInitialization(LEVEL_ZERO);
     }
 
+    /**
+     * Генерирует уникальное имя нового SSTable-файла с указанием уровня хранения.
+     */
     protected String generateNewTableName(int tier) {
         String timestamp = System.currentTimeMillis() + "_" + FILE_COUNTER.incrementAndGet();
         return SSTABLE_FOLDER + "T" + tier + "/sstable_" + timestamp + ".dat";
     }
 
-    protected List<SSTableMetadata> buildMetadataList() {
-        List<SSTableMetadata> newMetadataList = new LinkedList<>();
-        for (Map.Entry<String, Integer> entry : manifestHandler.getFileTiers().entrySet()) {
-            SortedStringTable table = new SSTable();
-            Map<String, String> tableMap = table.readWholeIntoMap(entry.getKey());
 
-            SSTableMetadata meta = new SSTableMetadata(entry.getKey(), entry.getValue(), tableMap.keySet());
-            newMetadataList.add(meta);
-        }
+//    protected List<SSTableMetadata> buildMetadataList() {
+//        List<SSTableMetadata> newMetadataList = new LinkedList<>();
+//        for (Map.Entry<String, Integer> entry : manifestHandler.getFileTiers().entrySet()) {
+//            SortedStringTable table = new SSTable();
+//            Map<String, String> tableMap = table.readWholeIntoMap(entry.getKey());
+//
+//            SSTableMetadata meta = new SSTableMetadata(entry.getKey(), entry.getValue(), tableMap.keySet());
+//            newMetadataList.add(meta);
+//        }
+//
+//        return newMetadataList;
+//    }
 
-        return newMetadataList;
-    }
-
+    /**
+     * Запускает таймер для периодического флаша MemTable на диск (каждые 3 минуты).
+     */
     protected void startFlushTimer() {
         Thread thread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
@@ -210,6 +269,9 @@ public class StorageCore implements DipLSMStorage {
         thread.start();
     }
 
+    /**
+     * Создаёт директории для всех уровней SSTable-хранилища, если они ещё не существуют.
+     */
     protected void generateTableFolder() {
         try {
             Files.createDirectories(Paths.get(SSTABLE_FOLDER));

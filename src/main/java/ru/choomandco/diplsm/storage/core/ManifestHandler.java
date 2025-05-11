@@ -142,6 +142,12 @@ class ManifestHandler {
         }
     }
 
+    /**
+     * Обновление уровня файла внутри манифеста
+     * @param filename название файла
+     * @param newTier назначаемый уровень
+     * @param manifestPath путь до файла манифеста
+     */
     public void updateFileTier(String filename, int newTier, String manifestPath) {
         fileTiers.put(filename, newTier);
         writeManifest(manifestPath);

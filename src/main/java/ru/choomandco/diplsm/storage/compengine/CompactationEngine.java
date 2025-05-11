@@ -7,8 +7,26 @@ import ru.choomandco.diplsm.storage.sstable.SSTableMetadata;
 import java.io.IOException;
 import java.util.*;
 
+/**
+ * Класс, реализующий движок компактации для LSM-структуры хранения.
+ * Объединяет несколько SSTable-файлов в один, устраняя дубликаты ключей
+ * и освобождая место за счёт удаления устаревших файлов.
+ */
 public class CompactationEngine {
 
+    /**
+     * Выполняет компактацию заданного списка SSTable-файлов.
+     * Все ключи и значения из указанных таблиц объединяются,
+     * при этом в случае дублирования ключей остаётся последнее значение (по порядку в списке).
+     * Создаётся новый SSTable, старые файлы удаляются.
+     *
+     * @param tablesMeta список метаданных SSTable-файлов, подлежащих компактации
+     * @param fileToCompact имя нового SSTable-файла, в который будут записаны данные
+     * @param level уровень, на который будет записан результат компактации
+     * @return метаинформация о новом SSTable-файле
+     * @throws IllegalArgumentException если список таблиц пуст
+     * @throws RuntimeException если не удалось удалить один из исходных файлов
+     */
     public SSTableMetadata compact(List<SSTableMetadata> tablesMeta, String fileToCompact, int level) {
         SortedStringTable table = new SSTable();
 

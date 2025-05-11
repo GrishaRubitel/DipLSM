@@ -117,11 +117,22 @@ public class SSTable implements SortedStringTable {
         return result;
     }
 
+    /**
+     * Метод для удаления файла SSTable
+     * @param filename имя файла для удаления
+     * @throws IOException ошибка удаления
+     */
     @Override
     public void deleteFIle(String filename) throws IOException {
         Files.delete(Paths.get(filename));
     }
 
+    /**
+     * Валидация контрольной суммы файла SSTable
+     * @param reader буферизированный "читатель" файлов
+     * @param filename название файла SSTable для чтения
+     * @throws InvalidCRC ошибка некорректной контрольной суммы
+     */
     private void verifyCRC(BufferedReader reader, String filename) throws InvalidCRC {
         try {
             reader.mark(1024 * 1024);

@@ -12,21 +12,43 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
+/**
+ * Асинхронная реализация LSM-хранилища.
+ * Расширяет {@link StorageCore}, выполняя операции flush и компактацию в отдельных потоках с использованием ExecutorService.
+ */
 public class StorageCoreAsync extends StorageCore{
+    /** Исполнитель задач, связанных с дисковыми операциями */
     private final ExecutorService diskExecutor = Executors.newSingleThreadExecutor();
 
+    /**
+     * Конструктор по умолчанию с размером MemTable 4 МБ и порогом компактации 5.
+     */
     public StorageCoreAsync() {
         this(4L * 1024 * 1024, 5);
     }
 
+    /**
+     * Конструктор с пользовательским размером MemTable.
+     * @param memTableMaxSize максимальный размер MemTable в байтах
+     */
     public StorageCoreAsync(Long memTableMaxSize) {
         this(memTableMaxSize, 5);
     }
 
+    /**
+     * Основной конструктор, вызывает родительский {@link StorageCore}.
+     * @param memTableMaxSize максимальный размер MemTable
+     * @param sstableTierThreshlod порог количества файлов на уровень до компактации
+     */
     public StorageCoreAsync(Long memTableMaxSize, int sstableTierThreshlod) {
         super(memTableMaxSize, sstableTierThreshlod);
     }
 
+    /**
+     * Асинхронно сбрасывает MemTable в SSTable.
+     * Снимок данных делается сразу, а запись и обновление метаданных происходит в фоне.
+     * @param tier уровень, на который выполняется flush
+     */
     @Override
     public synchronized void flush(int tier) {
         if (memoryTable.isEmpty()) {
@@ -56,6 +78,10 @@ public class StorageCoreAsync extends StorageCore{
         });
     }
 
+    /**
+     * Проверяет, требуется ли компактация, и при необходимости запускает её в фоне.
+     * @param level уровень, для которого проверяется необходимость компактации
+     */
     @Override
     protected void checkForCompactation(int level) {
         if (metadataMap.get(level).size() >= tierThreshold) {
@@ -63,6 +89,11 @@ public class StorageCoreAsync extends StorageCore{
         }
     }
 
+    /**
+     * Выполняет компактацию файлов заданного уровня в следующий уровень.
+     * Запускается асинхронно. При необходимости рекурсивно вызывает компактацию следующего уровня.
+     * @param level уровень, с которого начинается компактация
+     */
     @Override
     protected void compactationInitialization(int level) {
         List<SSTableMetadata> toCompact = metadataMap.get(level).stream()
