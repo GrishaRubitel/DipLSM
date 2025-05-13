@@ -53,7 +53,12 @@ class CompactationEngineTest {
         assertEquals(2, resultMeta.getTier());
 
         SSTable sstable = new SSTable();
-        Map<String, String> merged = sstable.readWholeIntoMap(output);
+        Map<String, String> merged = null;
+        try {
+            merged = sstable.readWholeIntoMap(output);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
         assertEquals(3, merged.size());
         assertEquals("1", merged.get("a"));
         assertEquals("3", merged.get("b"));

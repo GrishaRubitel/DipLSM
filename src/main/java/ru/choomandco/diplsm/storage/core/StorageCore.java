@@ -1,6 +1,7 @@
 package ru.choomandco.diplsm.storage.core;
 
 import ru.choomandco.diplsm.storage.compengine.CompactationEngine;
+import ru.choomandco.diplsm.storage.interfaces.CompEngine;
 import ru.choomandco.diplsm.storage.interfaces.DipLSMStorage;
 import ru.choomandco.diplsm.storage.interfaces.MemoryTable;
 import ru.choomandco.diplsm.storage.interfaces.SortedStringTable;
@@ -13,9 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.ConcurrentSkipListMap;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -41,12 +40,13 @@ public class StorageCore implements DipLSMStorage {
     /** Объект для работы с MANIFEST-файлом */
     protected ManifestHandler manifestHandler;
     /** Движок компактации SSTable-файлов */
-    protected CompactationEngine compactationEngine;
+    protected CompEngine compactationEngine;
     /** Метаданные всех SSTable-файлов, отсортированные по уровням */
     protected Map<Integer, TreeSet<SSTableMetadata>> metadataMap;
-
-    /** Поток для выполнения флашей из памяти на диск */
-    protected final ExecutorService flushExecutor = Executors.newSingleThreadExecutor();
+    /**
+     * Объект для взаимодействия с файлами SSTable
+     */
+    SortedStringTable table = new SSTable();
 
     /**
      * Конструктор по умолчанию.
@@ -85,7 +85,12 @@ public class StorageCore implements DipLSMStorage {
         }
 
         for (Map.Entry<String, Integer> entry : manifestHandler.getFileTiers().entrySet()) {
-            SSTableMetadata meta = new SSTableMetadata(entry.getKey(), entry.getValue(), new SSTable().readWholeIntoMap(entry.getKey()).keySet());
+            SSTableMetadata meta = null;
+            try {
+                meta = new SSTableMetadata(entry.getKey(), entry.getValue(), table.readWholeIntoMap(entry.getKey()).keySet());
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
             metadataMap.get(entry.getValue()).add(meta);
         }
 
@@ -128,7 +133,7 @@ public class StorageCore implements DipLSMStorage {
                 while (descendingIterator.hasNext()) {
                     SSTableMetadata meta = descendingIterator.next();
                     if (meta.getBloomFilter().mightContain(key)) {
-                        return new SSTable().getByKey(key, meta.getFilename());
+                        return table.getByKey(key, meta.getFilename());
                     }
                 }
             }
@@ -162,7 +167,7 @@ public class StorageCore implements DipLSMStorage {
         Map<String, String> snapshot = new TreeMap<>(memoryTable.getMap());
 
         String tempFilename = generateNewTableName(tier) + ".temp";
-        new SSTable().writeTableFromMap(snapshot, tempFilename);
+        table.writeTableFromMap(snapshot, tempFilename);
 
         String finalFilename = tempFilename.replace(".temp", "");
         File tempFile = new File(tempFilename);
@@ -199,7 +204,7 @@ public class StorageCore implements DipLSMStorage {
      */
     protected void compactationInitialization(int level) {
         List<SSTableMetadata> listToCompact = metadataMap.get(level).stream()
-                                    .sorted()
+                                    //.sorted()
                                     .limit(tierThreshold)
                                     .collect(Collectors.toList());
 
@@ -227,22 +232,8 @@ public class StorageCore implements DipLSMStorage {
      */
     protected String generateNewTableName(int tier) {
         String timestamp = System.currentTimeMillis() + "_" + FILE_COUNTER.incrementAndGet();
-        return SSTABLE_FOLDER + "T" + tier + "/sstable_" + timestamp + ".dat";
+        return SSTABLE_FOLDER + "T" + tier + "/sstable_" + timestamp + ".sst";
     }
-
-
-//    protected List<SSTableMetadata> buildMetadataList() {
-//        List<SSTableMetadata> newMetadataList = new LinkedList<>();
-//        for (Map.Entry<String, Integer> entry : manifestHandler.getFileTiers().entrySet()) {
-//            SortedStringTable table = new SSTable();
-//            Map<String, String> tableMap = table.readWholeIntoMap(entry.getKey());
-//
-//            SSTableMetadata meta = new SSTableMetadata(entry.getKey(), entry.getValue(), tableMap.keySet());
-//            newMetadataList.add(meta);
-//        }
-//
-//        return newMetadataList;
-//    }
 
     /**
      * Запускает таймер для периодического флаша MemTable на диск (каждые 3 минуты).

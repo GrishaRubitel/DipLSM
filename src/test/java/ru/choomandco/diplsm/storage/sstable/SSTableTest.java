@@ -34,7 +34,12 @@ class SSTableTest {
         data.put("key2", "value2");
 
         sstable.writeTableFromMap(data, TEST_FILE);
-        Map<String, String> result = sstable.readWholeIntoMap(TEST_FILE);
+        Map<String, String> result = null;
+        try {
+            result = sstable.readWholeIntoMap(TEST_FILE);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
 
         assertEquals(2, result.size());
         assertEquals("value1", result.get("key1"));
@@ -68,7 +73,12 @@ class SSTableTest {
         data.put("two", "2");
         sstable.writeTableFromMap(data, TEST_FILE);
 
-        List<String> lines = sstable.readStringsIntoList(TEST_FILE);
+        List<String> lines = null;
+        try {
+            lines = sstable.readStringsIntoList(TEST_FILE);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
         assertTrue(lines.stream().anyMatch(l -> l.equals("one=1")));
         assertTrue(lines.stream().anyMatch(l -> l.equals("two=2")));
     }

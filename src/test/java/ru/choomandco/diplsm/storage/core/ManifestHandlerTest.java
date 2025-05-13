@@ -4,6 +4,7 @@ import org.apache.commons.io.FileUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import ru.choomandco.diplsm.storage.interfaces.SortedStringTable;
 import ru.choomandco.diplsm.storage.sstable.SSTable;
 import ru.choomandco.diplsm.storage.sstable.SSTableMetadata;
 
@@ -47,8 +48,8 @@ class ManifestHandlerTest {
         String file1 = TEST_DIR + "T1\\a.dat";
         String file2 = TEST_DIR + "T2\\b.dat";
 
-        Files.writeString(Paths.get(file1), "");
-        Files.writeString(Paths.get(file2), "");
+        Files.write(Paths.get(file1), "");
+        Files.write(Paths.get(file2), "");
 
         handler.readManifest(TEST_DIR, MANIFEST_PATH);
         Map<String, Integer> tiers = handler.getFileTiers();
@@ -62,7 +63,7 @@ class ManifestHandlerTest {
         Map<String, String> dummyMap = new HashMap<>();
         dummyMap.put("ke1", "val1");
 
-        SSTable dummyTable = new SSTable();
+        SortedStringTable dummyTable = new SSTable();
         dummyTable.writeTableFromMap(dummyMap, dummyName);
 
         handler.readManifest(TEST_DIR, MANIFEST_PATH);

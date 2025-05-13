@@ -80,22 +80,13 @@ class ManifestHandler {
      */
     private void rebuildManifest(String tablesPath, String manifestPath) {
         File baseDir = new File(tablesPath);
-//        File parent = baseDir.getParentFile();
-//
-//        if (!parent.exists()) {
-//            try {
-//                Files.createDirectories(parent.toPath());
-//            } catch (IOException e) {
-//                throw new RuntimeException("Cannot create directory for MANIFEST", e);
-//            }
-//        }
 
         File[] tierDirs = baseDir.listFiles(File::isDirectory);
         if (tierDirs != null) {
             for (File dir : tierDirs) {
                 if (dir.getName().matches("T\\d+")) {
                     int tier = Integer.parseInt(dir.getName().substring(1));
-                    File[] sstables = dir.listFiles((d, name) -> name.endsWith(".dat"));
+                    File[] sstables = dir.listFiles((d, name) -> name.endsWith(".sst"));
                     if (sstables != null) {
                         for (File sstable : sstables) {
                             fileTiers.put(dir + "\\" + sstable.getName(), tier);

@@ -1,13 +1,11 @@
 package ru.choomandco.diplsm.storage.core;
 
-import ru.choomandco.diplsm.storage.sstable.SSTable;
 import ru.choomandco.diplsm.storage.sstable.SSTableMetadata;
 
 import java.io.File;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -18,7 +16,11 @@ import java.util.stream.Collectors;
  */
 public class StorageCoreAsync extends StorageCore{
     /** Исполнитель задач, связанных с дисковыми операциями */
-    private final ExecutorService diskExecutor = Executors.newSingleThreadExecutor();
+    protected final ExecutorService diskExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "LSM-Disk-Worker");
+        t.setDaemon(true);
+        return t;
+    });
 
     /**
      * Конструктор по умолчанию с размером MemTable 4 МБ и порогом компактации 5.
@@ -51,29 +53,29 @@ public class StorageCoreAsync extends StorageCore{
      */
     @Override
     public synchronized void flush(int tier) {
-        if (memoryTable.isEmpty()) {
-            return;
-        }
+        if (memoryTable.isEmpty()) return;
 
-        Map<String, String> snapshot = new TreeMap<>(memoryTable.getMap());
-        String tempFilename  = generateNewTableName(tier) + ".temp";
-        String finalFilename = tempFilename.replace(".temp", "");
+        Map<String,String> snapshot = new TreeMap<>(memoryTable.getMap());
+        String temp = generateNewTableName(tier) + ".temp";
+        String finalName = temp.replace(".temp", "");
         memoryTable.emptyMap();
 
         diskExecutor.submit(() -> {
+            //System.out.println("[disk] Starting flush tier=" + tier);
             try {
-                new SSTable().writeTableFromMap(snapshot, tempFilename);
-                if (!new File(tempFilename).renameTo(new File(finalFilename))) {
-                    throw new RuntimeException("Failed to rename temp to final SSTable");
+                table.writeTableFromMap(snapshot, temp);
+                if (!new File(temp).renameTo(new File(finalName))) {
+                    throw new RuntimeException("rename failed");
                 }
 
-                manifestHandler.addNewFile(finalFilename, tier, MANIFEST_PATH);
-                SSTableMetadata meta = new SSTableMetadata(finalFilename, tier, snapshot.keySet());
-                metadataMap.computeIfAbsent(tier, k -> new TreeSet<>()).add(meta);
+                manifestHandler.addNewFile(finalName, tier, MANIFEST_PATH);
+                SSTableMetadata meta = new SSTableMetadata(finalName, tier, snapshot.keySet());
+                metadataMap.get(tier).add(meta);
 
+                //System.out.println("[disk] Flush complete, scheduling compaction check");
                 checkForCompactation(LEVEL_ZERO);
-            } catch (Exception e) {
-                e.printStackTrace();
+            } catch (Exception ex) {
+                ex.printStackTrace();
             }
         });
     }
@@ -83,9 +85,9 @@ public class StorageCoreAsync extends StorageCore{
      * @param level уровень, для которого проверяется необходимость компактации
      */
     @Override
-    protected void checkForCompactation(int level) {
+    public void checkForCompactation(int level) {
         if (metadataMap.get(level).size() >= tierThreshold) {
-            diskExecutor.submit(() -> compactationInitialization(level));
+            compactationInitialization(level);
         }
     }
 
@@ -95,24 +97,28 @@ public class StorageCoreAsync extends StorageCore{
      * @param level уровень, с которого начинается компактация
      */
     @Override
-    protected void compactationInitialization(int level) {
+    public void compactationInitialization(int level) {
         List<SSTableMetadata> toCompact = metadataMap.get(level).stream()
+                .sorted()
                 .limit(tierThreshold)
                 .collect(Collectors.toList());
-        if (toCompact.isEmpty()) return;
+        if (toCompact.isEmpty()) {
+            return;
+        }
 
         metadataMap.get(level).removeAll(toCompact);
 
-        int nextLevel = (level == NUM_OF_LEVELS - 1) ? level : level + 1;
-        SSTableMetadata newMeta = compactationEngine.compact(toCompact, generateNewTableName(nextLevel), nextLevel);
+        int nextLevel = Math.min(level + 1, NUM_OF_LEVELS - 1);
+        SSTableMetadata newMeta = compactationEngine.compact(
+                toCompact,
+                generateNewTableName(nextLevel),
+                nextLevel
+        );
 
-        metadataMap
-                .computeIfAbsent(newMeta.getTier(), k -> new TreeSet<>())
-                .add(newMeta);
-
+        metadataMap.get(newMeta.getTier()).add(newMeta);
         manifestHandler.postCompactationRebuild(toCompact, newMeta, MANIFEST_PATH);
 
-        if (nextLevel < NUM_OF_LEVELS && metadataMap.get(nextLevel).size() >= tierThreshold) {
+        if (metadataMap.get(nextLevel).size() >= tierThreshold) {
             checkForCompactation(nextLevel);
         }
     }

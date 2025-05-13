@@ -1,18 +1,22 @@
 package ru.choomandco.diplsm.storage.sstable;
 
-import ru.choomandco.diplsm.exception.invalid.crc.InvalidCRC;
 import ru.choomandco.diplsm.storage.interfaces.SortedStringTable;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.zip.CRC32;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
- * Класс SSTable
+ * Класс SSTable, работающий с бинарным текстом
  */
 public class SSTable implements SortedStringTable {
+    private static final int FOOTER_SIZE = 12;
+    private static final int MAGIC = 0x4C534D31; // 'LSM1'
     /**
      * Метод пишет мапу MemTable в новый SSTable.
      * @param memTableMap Мапа с данными из MemTable
@@ -20,25 +24,38 @@ public class SSTable implements SortedStringTable {
      */
     @Override
     public void writeTableFromMap(Map<String, String> memTableMap, String filename) {
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(filename))) {
-            CRC32 crc = new CRC32();
-            StringBuilder contentBuffer = new StringBuilder();
+        try (RandomAccessFile raf = new RandomAccessFile(filename, "rw")) {
+            raf.setLength(0);
+            raf.seek(12);
 
-            for (Map.Entry<String, String> entry : memTableMap.entrySet()) {
-                String line = entry.getKey() + ":" + entry.getValue();
-                contentBuffer.append(line).append("\n");
+            List<IndexEntry> index = new ArrayList<>();
+            for (Map.Entry<String,String> e : memTableMap.entrySet()) {
+                long pos = raf.getFilePointer();
+                byte[] key = e.getKey().getBytes(UTF_8);
+                byte[] val = e.getValue().getBytes(UTF_8);
+
+                raf.writeInt(key.length);
+                raf.write(key);
+                raf.writeInt(val.length);
+                raf.write(val);
+
+                index.add(new IndexEntry(e.getKey(), pos));
             }
 
-            byte[] dataBytes = contentBuffer.toString().getBytes();
-            crc.update(dataBytes);
+            long indexOffset = raf.getFilePointer();
+            raf.writeInt(index.size());
+            for (IndexEntry ie : index) {
+                byte[] key = ie.getKey().getBytes(UTF_8);
+                raf.writeInt(key.length);
+                raf.write(key);
+                raf.writeLong(ie.getOffset());
+            }
 
-            writer.write("#CRC=" + crc.getValue());
-            writer.newLine();
-
-            writer.write(contentBuffer.toString());
-
+            raf.seek(0);
+            raf.writeLong(indexOffset);
+            raf.writeInt(0x4C534D31);
         } catch (IOException e) {
-            throw new RuntimeException("Failed to writeTableFromMap SSTable", e);
+            throw new RuntimeException(e);
         }
     }
 
@@ -49,122 +66,133 @@ public class SSTable implements SortedStringTable {
      */
     @Override
     public String getByKey(String key, String filename) {
-        try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
-            verifyCRC(reader, filename);
-            String line;
-            while ((line = reader.readLine()) != null) {
-                String[] parts = line.split(":", 2);
-                if (parts.length == 2 && parts[0].equals(key)) {
-                    return parts[1];
-                }
+        try (RandomAccessFile raf = new RandomAccessFile(filename, "r")) {
+            raf.seek(0);
+            long indexOffset = raf.readLong();
+            int magic = raf.readInt();
+            if (magic != 0x4C534D31) throw new IOException("Bad SSTable magic");
+
+            raf.seek(indexOffset);
+            int count = raf.readInt();
+
+            List<IndexEntry> idx = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) {
+                int klen = raf.readInt();
+                byte[] kbs = new byte[klen]; raf.readFully(kbs);
+                long off = raf.readLong();
+                idx.add(new IndexEntry(new String(kbs, UTF_8), off));
             }
-        } catch (InvalidCRC e) {
+            int pos = Collections.binarySearch(
+                    idx,
+                    new IndexEntry(key, -1),
+                    Comparator.comparing(IndexEntry::getKey)
+            );
+            if (pos < 0) return null;
+            long dataOff = idx.get(pos).getOffset();
+
+            raf.seek(dataOff);
+            int klen = raf.readInt();
+            raf.skipBytes(klen);
+            int vlen = raf.readInt();
+            byte[] vbs = new byte[vlen]; raf.readFully(vbs);
+            return new String(vbs, UTF_8);
+        } catch (FileNotFoundException e) {
             throw new RuntimeException(e);
         } catch (IOException e) {
-            throw new RuntimeException("Error reading SSTable: " + filename, e);
+            throw new RuntimeException(e);
         }
-        return null;
     }
 
     /**
-     * Метод для чтения всего SSTable в мапу
-     * @param filename Название файла SSTable
-     * @return Мапа данных из SSTable
+     * Читает весь SSTable-файл в отсортированное отображение ключ→значение.
+     * Формат бинарного файла:
+     * [Data Block][Index Block][Footer]
+     * Footer (12 байт) = [indexOffset (8 байт)][magic (4 байта)]
+     *
+     * @param filename путь к SSTable-файлу
+     * @return TreeMap с данными из файла
+     * @throws IOException при ошибках I/O или некорректном формате
      */
     @Override
-    public Map<String, String> readWholeIntoMap(String filename) {
-        Map<String, String> result = new TreeMap<>();
+    public Map<String, String> readWholeIntoMap(String filename) throws IOException {
+        Map<String,String> result = new TreeMap<>();
+        try (RandomAccessFile raf = new RandomAccessFile(filename, "r")) {
 
-        try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
-            verifyCRC(reader, filename);
-            String line;
-            while ((line = reader.readLine()) != null) {
-                String[] parts = line.split(":", 2);
-                if (parts.length == 2) {
-                    result.put(parts[0], parts[1]);
-                }
+            raf.seek(0);
+            long indexOffset = raf.readLong();
+            int magic = raf.readInt();
+            if (magic != 0x4C534D31) throw new IOException("Invalid SSTable file (magic mismatch): " + filename);
+
+            raf.seek(FOOTER_SIZE);
+            while (raf.getFilePointer() < indexOffset) {
+                int keyLen = raf.readInt();
+                byte[] keyBytes = new byte[keyLen];
+                raf.readFully(keyBytes);
+
+                int valLen = raf.readInt();
+                byte[] valBytes = new byte[valLen];
+                raf.readFully(valBytes);
+
+                String key = new String(keyBytes, StandardCharsets.UTF_8);
+                String val = new String(valBytes, StandardCharsets.UTF_8);
+                result.put(key, val);
             }
-        } catch (InvalidCRC e) {
-            throw new RuntimeException(e);
-        } catch (IOException e) {
-            throw new RuntimeException("Error while reading SSTable into map: " + filename, e);
         }
-
         return result;
     }
 
     /**
-     * Метод для чтения всех строк SSTable в список строк
-     * @param filename Название файла SSTable
-     * @return Список строк файла SSTable
+     * Читает все строки SSTable-файла и возвращает список строк вида "key=value".
+     * Формирует список в том порядке, в котором записаны пары в Data Block.
+     *
+     * @param filename путь к SSTable-файлу
+     * @return List<String> всех записей "key=value"
+     * @throws IOException при ошибках I/O или некорректном формате
      */
     @Override
-    public List<String> readStringsIntoList(String filename) {
+    public List<String> readStringsIntoList(String filename) throws IOException {
         List<String> result = new ArrayList<>();
-
-        try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
-            verifyCRC(reader, filename);
-            String line;
-            while ((line = reader.readLine()) != null) {
-                result.add(line.replace(":", "="));
+        try (RandomAccessFile raf = new RandomAccessFile(filename, "r")) {
+            long fileSize = raf.length();
+            raf.seek(fileSize - FOOTER_SIZE);
+            long indexOffset = raf.readLong();
+            int magic = raf.readInt();
+            if (magic != MAGIC) {
+                throw new IOException("Invalid SSTable file (magic mismatch): " + filename);
             }
-        } catch (InvalidCRC e) {
-            throw new RuntimeException(e);
-        } catch (IOException e) {
-            throw new RuntimeException("Error reading SSTable lines from file: " + filename, e);
-        }
 
+            raf.seek(FOOTER_SIZE);
+            while (raf.getFilePointer() < indexOffset) {
+                int keyLen = raf.readInt();
+                byte[] keyBytes = new byte[keyLen];
+                raf.readFully(keyBytes);
+
+                int valLen = raf.readInt();
+                byte[] valBytes = new byte[valLen];
+                raf.readFully(valBytes);
+
+                String key = new String(keyBytes, StandardCharsets.UTF_8);
+                String val = new String(valBytes, StandardCharsets.UTF_8);
+                result.add(key + "=" + val);
+            }
+        }
         return result;
     }
 
     /**
-     * Метод для удаления файла SSTable
-     * @param filename имя файла для удаления
-     * @throws IOException ошибка удаления
+     * Удаляет файл SSTable.
+     *
+     * @param filename путь к файлу
+     * @throws IOException при ошибке удаления
      */
     @Override
     public void deleteFIle(String filename) throws IOException {
-        Files.delete(Paths.get(filename));
-    }
-
-    /**
-     * Валидация контрольной суммы файла SSTable
-     * @param reader буферизированный "читатель" файлов
-     * @param filename название файла SSTable для чтения
-     * @throws InvalidCRC ошибка некорректной контрольной суммы
-     */
-    private void verifyCRC(BufferedReader reader, String filename) throws InvalidCRC {
+        Path p = Paths.get(filename).toAbsolutePath().normalize();
         try {
-            reader.mark(1024 * 1024);
-
-            String crcLine = reader.readLine();
-            if (crcLine == null || !crcLine.startsWith("#CRC=")) {
-                throw new InvalidCRC("Missing or malformed CRC line in file: " + filename);
-            }
-
-            long expectedCrc = Long.parseLong(crcLine.substring(5));
-            StringBuilder content = new StringBuilder();
-            String line;
-
-            while ((line = reader.readLine()) != null) {
-                content.append(line).append("\n");
-            }
-
-            CRC32 crc = new CRC32();
-            crc.update(content.toString().getBytes());
-            long actualCrc = crc.getValue();
-
-            if (actualCrc != expectedCrc) {
-                throw new InvalidCRC("CRC mismatch in file: " + filename +
-                        ", expected=" + expectedCrc + ", actual=" + actualCrc);
-            }
-
-            reader.reset();
-
-            reader.readLine();
-
+            Files.delete(p);
+//            System.out.println("[delete] Deleted SSTable " + p);
         } catch (IOException e) {
-            throw new RuntimeException("Error during CRC verification in file: " + filename, e);
-        }
-    }
+//            System.err.println("[delete] FAILED to delete SSTable " + p + ": " + e.getMessage());
+            throw e;
+        }    }
 }
