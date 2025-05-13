@@ -1,8 +1,0 @@
-#CRC=3369221056
-T4 ./data/lsm/tables/T4/sstable_1747141686246_610.sst
-T1 ./data/lsm/tables/T1/sstable_1747141795958_749.sst
-T0 ./data/lsm/tables/T0/sstable_1747141797715_751.sst
-T4 ./data/lsm/tables/T4/sstable_1747141781527_731.sst
-T1 ./data/lsm/tables/T1/sstable_1747141793055_745.sst
-T2 ./data/lsm/tables/T2/sstable_1747141790541_742.sst
-T0 ./data/lsm/tables/T0/sstable_1747141796611_750.sst
